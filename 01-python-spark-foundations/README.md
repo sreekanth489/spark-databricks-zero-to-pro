@@ -12,6 +12,7 @@
 
 | # | Topic | Guide | Notebook | Time |
 |---|-------|-------|----------|------|
+| 00 | Big Data & Hadoop Fundamentals | [Guide](00-big-data-hadoop-fundamentals.md) | [Notebook](00-big-data-hadoop-fundamentals_notebook.py) | 90 min |
 | 01 | Python Essentials for Spark | [Guide](01-python-essentials.md) | [Notebook](01-python-essentials_notebook.py) | 45 min |
 | 02 | Spark Architecture | [Guide](02-spark-architecture.md) | [Notebook](02-spark-architecture_notebook.py) | 50 min |
 | 03 | Distributed Computing | [Guide](03-distributed-computing.md) | [Notebook](03-distributed-computing_notebook.py) | 50 min |
@@ -20,12 +21,15 @@
 | 06 | Spark SQL | [Guide](06-spark-sql.md) | [Notebook](06-spark-sql_notebook.py) | 55 min |
 | 07 | Catalyst Optimizer | [Guide](07-catalyst-optimizer.md) | [Notebook](07-catalyst-optimizer_notebook.py) | 50 min |
 
-**Total estimated time: ~6 hours**
+**Total estimated time: ~7.5 hours**
 
 ## Learning Path
 
 ```
-01 Python Essentials ──> 02 Spark Architecture ──> 03 Distributed Computing
+00 Big Data & Hadoop ──> 01 Python Essentials ──> 02 Spark Architecture
+                                                          |
+                                                          v
+                                                  03 Distributed Computing
                                                           |
                                                           v
         06 Spark SQL <── 05 DataFrames Intro <── 04 RDDs Fundamentals
@@ -46,6 +50,7 @@ lets you practice hands-on in a Databricks environment.
 
 ## What You Will Be Able to Do After This Module
 
+- Explain the Big Data problem, why traditional databases fail, and how Hadoop/Spark solve it
 - Write Pythonic code that leverages the patterns Spark relies on (lambdas, generators, type hints)
 - Explain Spark's driver-executor architecture and how jobs, stages, and tasks relate
 - Reason about data partitioning, shuffles, and narrow vs. wide transformations
