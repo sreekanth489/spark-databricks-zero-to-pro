@@ -40,9 +40,13 @@ UniForm compatibility.
   --                               Liquid Clustering
   --                               Predictive I/O
   --                               UniForm (Iceberg compat)
-  --                               Deletion Vectors
+  --                               Deletion Vectors *
   --                               Row-level concurrency
 ```
+
+> \* **Deletion Vectors** are covered in depth in
+> [Topic 10 -- External Delta Tables on S3 & Deletion Vectors](10-external-delta-tables-s3.md),
+> including field-by-field transaction log analysis and DV ON vs OFF comparison.
 
 ### The Lakehouse Architecture
 
@@ -208,7 +212,7 @@ USING DELTA
 AS SELECT * FROM source_table
 ```
 
-**Method 4: CREATE TABLE with schema**
+**Method 4: CREATE TABLE with schema (managed)**
 
 ```sql
 CREATE TABLE my_table (
@@ -217,8 +221,26 @@ CREATE TABLE my_table (
   created_at TIMESTAMP
 )
 USING DELTA
-LOCATION '/path/to/table'
 ```
+
+> For a comprehensive deep dive into managed tables (CRUD, MERGE, schema
+> enforcement, constraints, OPTIMIZE, VACUUM, CDF), see
+> [Topic 09 -- Managed Delta Tables Deep Dive](09-managed-delta-tables-deep-dive.md).
+
+**Method 4b: CREATE TABLE with LOCATION (external)**
+
+```sql
+CREATE TABLE my_table (
+  id INT,
+  name STRING,
+  created_at TIMESTAMP
+)
+USING DELTA
+LOCATION 's3://bucket/path/to/table'
+```
+
+> For external tables on S3 with deletion vector behavior, see
+> [Topic 10 -- External Delta Tables on S3 & Deletion Vectors](10-external-delta-tables-s3.md).
 
 **Method 5: Convert existing Parquet**
 
@@ -294,3 +316,12 @@ These are high-frequency questions. Understand the log mechanics cold.
 
 Proceed to [02 - CRUD & MERGE Operations](02-crud-operations.md) to learn how
 to insert, update, delete, and merge data in Delta tables.
+
+For practical deep dives that bring all features together:
+
+- [09 -- Managed Delta Tables Deep Dive](09-managed-delta-tables-deep-dive.md):
+  End-to-end walkthrough of managed tables from beginner to advanced (CRUD, MERGE,
+  constraints, OPTIMIZE, VACUUM, CDF).
+- [10 -- External Delta Tables on S3 & Deletion Vectors](10-external-delta-tables-s3.md):
+  External tables on AWS S3, transaction log field-by-field analysis, and deletion
+  vector ON vs OFF behavior comparison.

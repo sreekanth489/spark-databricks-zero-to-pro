@@ -26,8 +26,10 @@ Architecture pattern used in production Lakehouse deployments.
 | 06 | Change Data Feed | [Guide](06-change-data-feed.md) | [Notebook](06-change-data-feed_notebook.py) | 35 min |
 | 07 | Medallion Architecture | [Guide](07-medallion-architecture.md) | [Notebook](07-medallion-architecture_notebook.py) | 50 min |
 | 08 | Delta Sharing | [Guide](08-delta-sharing.md) | [Notebook](08-delta-sharing_notebook.py) | 30 min |
+| 09 | Managed Delta Tables Deep Dive | [Guide](09-managed-delta-tables-deep-dive.md) | [Notebook](09-managed-delta-tables-deep-dive_notebook.py) | 60 min |
+| 10 | External Delta Tables on S3 & Deletion Vectors | [Guide](10-external-delta-tables-s3.md) | [Notebook](10-external-delta-tables-s3_notebook.py) | 75 min |
 
-**Total estimated time: ~5.5 hours**
+**Total estimated time: ~7.5 hours**
 
 ## How to Use This Module
 
@@ -66,6 +68,14 @@ Architecture pattern used in production Lakehouse deployments.
  |ACID |  |Time |  |Schema|  |Audit|  |Optimize|
  |Txns |  |Travel| |Evolve|  | CDF |  |Z-Order |
  +-----+  +-----+  +------+  +-----+  +--------+
+              |
+    +---------+---------+
+    |                   |
+ +--v--------+   +------v----------+
+ | Managed   |   | External Tables |
+ | Tables    |   | + Deletion      |
+ | Deep Dive |   |   Vectors       |
+ +-----------+   +-----------------+
 ```
 
 ## Next Module
