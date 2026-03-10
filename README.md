@@ -29,7 +29,7 @@ Every topic includes a **conceptual guide** (`.md`) and a **runnable Databricks 
 
 ---
 
-## Big Data Evolution & Spark Fundamentals
+## <img src="https://img.shields.io/badge/Phase_1-Big_Data_Evolution_&_Spark_Fundamentals-E34F26?style=for-the-badge&logo=apachespark&logoColor=white" />
 
 ## Day 1: Big Data Evolution
 
@@ -57,7 +57,7 @@ Logical plan, optimized plan, physical plan, cost-based optimization.
 
 Shuffle, partitioning, skew, repartition vs coalesce.
 
-## Databricks Platform
+## <img src="https://img.shields.io/badge/Phase_2-Databricks_Platform-FF3621?style=for-the-badge&logo=databricks&logoColor=white" />
 
 ## Day 7: Databricks Platform Overview
 
@@ -71,7 +71,7 @@ DBFS abstraction layer, underlying cloud storage mapping.
 
 Repos, GitHub/Bitbucket integration, version control workflows.
 
-## Unity Catalog & Data Governance
+## <img src="https://img.shields.io/badge/Phase_3-Unity_Catalog_&_Data_Governance-1B998B?style=for-the-badge&logo=databricks&logoColor=white" />
 
 ## Day 10: Unity Catalog Fundamentals
 
@@ -89,7 +89,7 @@ Storage management, lifecycle behavior, table metadata.
 
 File governance using volumes and Unity Catalog.
 
-## Delta Lake
+## <img src="https://img.shields.io/badge/Phase_4-Delta_Lake-00ADD8?style=for-the-badge&logo=delta&logoColor=white" />
 
 ## Day 14: Delta Lake Fundamentals
 
@@ -115,7 +115,7 @@ Statistics collection, data skipping optimization.
 
 **Article:** [Inside the Delta Log (Part 6): Stats, Data Skipping & Z-ORDER Internals](https://medium.com/@sreekanth489/inside-the-delta-log-part-6-stats-data-skipping-z-order-internals-59cb7f1c89c7)
 
-## Data Engineering Pipelines - Batch & Streaming
+## <img src="https://img.shields.io/badge/Phase_5-Data_Engineering_Pipelines:_Batch_&_Streaming-FF6F00?style=for-the-badge&logo=apachekafka&logoColor=white" />
 
 ## Day 18: Medallion Architecture
 
@@ -145,7 +145,7 @@ Modern pipeline orchestration using Lakeflow.
 
 Data ingestion from operational databases.
 
-## Performance & Cost Optimization
+## <img src="https://img.shields.io/badge/Phase_6-Performance_&_Cost_Optimization-7B2FF7?style=for-the-badge&logo=speedtest&logoColor=white" />
 
 ## Day 25: Performance Engineering
 
@@ -155,7 +155,7 @@ Photon engine, AQE, query optimization.
 
 Cluster sizing, autoscaling, job clusters vs interactive clusters.
 
-## Interoperability & Open Table Formats
+## <img src="https://img.shields.io/badge/Phase_7-Interoperability_&_Open_Table_Formats-0D47A1?style=for-the-badge&logo=apacheiceberg&logoColor=white" />
 
 ## Day 27: Open Table Formats
 
@@ -169,7 +169,7 @@ Querying external systems without copying data.
 
 Secure cross-organization data sharing.
 
-## Databricks DevOps
+## <img src="https://img.shields.io/badge/Phase_8-Databricks_DevOps-2E7D32?style=for-the-badge&logo=githubactions&logoColor=white" />
 
 ## Day 30: Databricks DevOps
 
@@ -179,13 +179,13 @@ CI/CD pipelines, Databricks Asset Bundles, automated deployments.
 
 Jobs monitoring, logging, alerts, debugging pipelines.
 
-## Databricks Analytics Layer
+## <img src="https://img.shields.io/badge/Phase_9-Databricks_Analytics_Layer-F9A825?style=for-the-badge&logo=databricks&logoColor=white" />
 
 ## Day 32: Databricks SQL & BI
 
 Dashboards, SQL warehouses, query acceleration.
 
-## Databricks Machine Learning Platform
+## <img src="https://img.shields.io/badge/Phase_10-Databricks_Machine_Learning_Platform-AD1457?style=for-the-badge&logo=mlflow&logoColor=white" />
 
 ## Day 33: MLflow Fundamentals
 
@@ -195,7 +195,7 @@ Experiment tracking, model registry.
 
 Deploying models and Interface endpoints.
 
-## Databricks Generative AI
+## <img src="https://img.shields.io/badge/Phase_11-Databricks_Generative_AI-6A1B9A?style=for-the-badge&logo=openai&logoColor=white" />
 
 ## Day 35: Introduction to Generative AI
 
@@ -253,7 +253,7 @@ Serving models using GPUs and scalable inference. Scaling model inference with G
 
 Combining data pipelines, vector search and LLMs.
 
-## Databricks Agentic AI
+## <img src="https://img.shields.io/badge/Phase_12-Databricks_Agentic_AI-00695C?style=for-the-badge&logo=robot&logoColor=white" />
 
 ## Day 49: Agentic AI Concepts
 
