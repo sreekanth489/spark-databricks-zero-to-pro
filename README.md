@@ -1,6 +1,6 @@
 # Databricks Pro Series: From Lakehouse Engineering to Generative AI
 
-Databricks zero to pro repo for data engineers and AI practitioners to learn Databricks in 48 sessions. This repo includes conceptual guides, runnable notebooks, real-time examples and hands-on projects. Each session provides practical knowledge on Databricks services, allowing you to apply what you've learned and gain production-ready skills.
+Databricks zero to pro repo for data engineers and AI practitioners to learn Databricks in 55 sessions. This repo includes conceptual guides, runnable notebooks, real-time examples and hands-on projects. Each session provides practical knowledge on Databricks services, allowing you to apply what you've learned and gain production-ready skills.
 
 Course phases: **Foundations → Data Engineering → DevOps → AI**
 
@@ -191,67 +191,97 @@ Dashboards, SQL warehouses, query acceleration.
 
 Experiment tracking, model registry.
 
+## Day 34: Model Serving
+
+Deploying models and Interface endpoints.
+
 ## Databricks Generative AI
 
-## Day 34: Introduction to Generative AI
+## Day 35: Introduction to Generative AI
 
 LLM fundamentals, prompt engineering concepts.
 
-## Day 35: Data Preparation for AI
+## Day 36: Data Preparation for AI
 
 Document ingestion, preprocessing, chunking strategies.
 
-## Day 36: Embeddings & Vector Databases
+## Day 37: Embeddings & Vector Databases
 
 Embedding generation, cosine similarity, vector indexing.
 
-## Day 37: Databricks Vector Search
+## Day 38: Databricks Vector Search
 
 Managed vector database for RAG applications.
 
-## Day 38: RAG Architecture
+## Day 39: RAG Architecture
 
 Retrieval Augmented Generation pipelines.
 
-## Day 39: Building Knowledge Assistants
+## Day 40: Building Knowledge Assistants
 
 Agent frameworks and AI assistants.
 
-## Day 40: Genie Space
+## Day 41: Genie Space
 
 Natural language analytics interface for business users.
 
-## Day 41: Model Access in Databricks
+## Day 42: Model Access in Databricks
 
 Using hosted models and external models.
 
-## Day 42: Context Window Optimization
+## Day 43: Context Window Optimization
 
 Prompt structuring, batching and caching.
 
-## Day 43: LLM Cost Optimization
+## Day 44: LLM Cost Optimization
 
 Model selection, open source vs proprietary models.
 
-## Day 44: AI Safety & Guardrails
+## Day 45: AI Safety & Guardrails
 
 Hallucination mitigation, evaluation frameworks.
 
-## Day 45: AI Governance & Compliance
+## Day 46: AI Governance & Compliance
 
 Handling PII, security, SOC2/HIPAA considerations.
 
-## Day 46: Distributed Model Inference
+## Day 47: Distributed Model Inference
 
-Serving models using GPUs and scalable inference.
+Serving models using GPUs and scalable inference. Scaling model inference with GPUs.
 
-## Day 47: Building End-to-End AI Applications
+## Day 48: Building End-to-End AI Applications
 
 Combining data pipelines, vector search and LLMs.
 
-## Day 48: Capstone Project
+## Databricks Agentic AI
 
-End-to-end lakehouse pipeline with RAG application built on Databricks.
+## Day 49: Agentic AI Concepts
+
+Autonomous agents, planning, reasoning.
+
+## Day 50: Agent Tools & Function Calling
+
+Tool usage and external system integration.
+
+## Day 51: Building Agents on Databricks
+
+Agent orchestration with data tools and models.
+
+## Day 52: Multi-Agent Systems
+
+Coordinator agents and worker agents.
+
+## Day 53: Agent Observability
+
+Monitoring agent workflows and debugging.
+
+## Day 54: Building End-to-End AI Applications
+
+Combining data pipelines, vector search and LLMs. Building a lakehouse-powered AI platform.
+
+## Day 55: Capstone Project
+
+End-to-end lakehouse pipeline with RAG application built on Databricks. End-to-end pipeline: ingestion → Delta → vector search → AI agent.
 
 ---
 
