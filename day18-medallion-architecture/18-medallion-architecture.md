@@ -19,7 +19,8 @@ After completing this session, you will be able to:
 The **Medallion Architecture** (also called **multi-hop architecture**) is a data design pattern that logically organizes data in a lakehouse into multiple structured layers. Each layer represents a progressive step in refining raw data into high-quality, business-ready datasets.
 
 ![Medallion Architecture: Bronze -> Silver -> Gold](images/medallion-architecture.png)
-*Image credit: Databricks*
+
+![Data Quality Levels: Ingest -> Bronze -> Silver -> Gold -> Consumers](images/medallion-data-quality.png)
 
 ```
    Raw Data Sources (Kafka, RDBMS, IoT, APIs, Files)
@@ -317,19 +318,31 @@ This ensures that when new data arrives, only the new records are processed -- n
 
 ### Unity Catalog Governance
 
-Organize Medallion layers under Unity Catalog for centralized governance:
+Each medallion layer gets its own schema for clean separation, access control, and discoverability:
 ```sql
-USE CATALOG my_catalog;
-CREATE SCHEMA bronze COMMENT 'Raw data layer';
-CREATE SCHEMA silver COMMENT 'Cleansed and conformed data';
-CREATE SCHEMA gold   COMMENT 'Business-ready aggregations';
+USE CATALOG databricks_pro;
+CREATE SCHEMA medallion_bronze COMMENT 'Raw, unfiltered data with ingestion metadata';
+CREATE SCHEMA medallion_silver COMMENT 'Cleansed, deduplicated, validated data';
+CREATE SCHEMA medallion_gold   COMMENT 'Business-ready aggregations and KPIs';
+```
+
+This gives you:
+```
+databricks_pro (catalog)
+  ├── medallion_bronze.orders          -- raw data (includes dirty records)
+  ├── medallion_silver.orders          -- cleansed, enriched orders
+  ├── medallion_silver.customers       -- customer master reference
+  ├── medallion_silver.products        -- product catalog reference
+  ├── medallion_gold.daily_revenue     -- regional dashboards
+  ├── medallion_gold.customer_summary  -- customer LTV
+  └── medallion_gold.product_performance -- merchandising
 ```
 
 ### Delta Table Properties
 
 Enable auto-optimization for all tables:
 ```sql
-ALTER TABLE orders_bronze SET TBLPROPERTIES (
+ALTER TABLE medallion_bronze.orders SET TBLPROPERTIES (
   'delta.autoOptimize.optimizeWrite' = 'true',
   'delta.autoOptimize.autoCompact' = 'true'
 );
@@ -339,8 +352,8 @@ ALTER TABLE orders_bronze SET TBLPROPERTIES (
 
 Add CHECK constraints on Silver tables to enforce data quality:
 ```sql
-ALTER TABLE orders_silver ADD CONSTRAINT valid_quantity CHECK (quantity > 0);
-ALTER TABLE orders_silver ADD CONSTRAINT valid_amount CHECK (total_amount > 0);
+ALTER TABLE medallion_silver.orders ADD CONSTRAINT valid_quantity CHECK (quantity > 0);
+ALTER TABLE medallion_silver.orders ADD CONSTRAINT valid_amount CHECK (total_amount > 0);
 ```
 
 ### MERGE for Idempotent Silver Updates
@@ -349,7 +362,7 @@ Use MERGE INTO (upsert) instead of overwrite for incremental Silver updates:
 ```python
 from delta.tables import DeltaTable
 
-silver_table = DeltaTable.forPath(spark, "s3://bucket/silver/orders")
+silver_table = DeltaTable.forName(spark, "medallion_silver.orders")
 
 (silver_table.alias("target")
     .merge(df_new_data.alias("source"), "target.order_id = source.order_id")
@@ -363,8 +376,8 @@ silver_table = DeltaTable.forPath(spark, "s3://bucket/silver/orders")
 
 Periodically compact small files and co-locate data for faster queries:
 ```sql
-OPTIMIZE orders_silver ZORDER BY (customer_id, order_date);
-OPTIMIZE gold_daily_revenue ZORDER BY (order_day, city);
+OPTIMIZE medallion_silver.orders ZORDER BY (customer_id, order_date);
+OPTIMIZE medallion_gold.daily_revenue ZORDER BY (order_day, city);
 ```
 
 ---
@@ -426,12 +439,12 @@ The **Databricks Certified Data Engineer Associate** exam tests Medallion Archit
 See the accompanying notebook: [`18-medallion-architecture_notebook.py`](18-medallion-architecture_notebook.py)
 
 The lab builds a production-grade Bronze -> Silver -> Gold pipeline for a retail scenario using:
-- Unity Catalog (`databricks_pro.medallion_lab`) for governance
-- Delta table properties: auto-optimize, auto-compact
-- CHECK constraints on Silver for data quality enforcement
+- **Separate Unity Catalog schemas** per layer: `medallion_bronze`, `medallion_silver`, `medallion_gold`
+- **Dirty data in raw input** (null customer_id, zero/negative quantity, duplicates) to validate Silver filtering
+- **Data quality validation** proving dirty records are filtered from Bronze to Silver
+- CHECK constraints on Silver for enforcement
 - MERGE (upsert) for idempotent Silver incremental updates
 - OPTIMIZE + ZORDER for query performance
-- Auto Loader reference patterns for Bronze ingestion from S3
 - Three Gold tables: daily revenue, customer LTV, product performance
 - Delta Lake time travel and history across all layers
 
