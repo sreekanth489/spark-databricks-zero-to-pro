@@ -187,18 +187,46 @@ Auto Loader          Structured Streaming       Batch/Streaming
 
 ### Auto Loader for Bronze Ingestion
 
-Auto Loader (`cloudFiles` format) is the recommended way to ingest files into the Bronze layer:
+Auto Loader (`cloudFiles` format) is the recommended way to ingest files into the Bronze layer. Three modes are available on AWS:
 
+**Directory listing** (recommended starter -- zero setup):
 ```python
 spark.readStream
     .format("cloudFiles")
     .option("cloudFiles.format", "parquet")
-    .option("cloudFiles.schemaLocation", "s3://my-lakehouse/checkpoints/orders_raw")
+    .option("cloudFiles.useNotifications", "false")
+    .option("cloudFiles.schemaLocation", "s3://my-lakehouse/schemas/orders")
     .load("s3://my-lakehouse/raw/orders/")
-    .createOrReplaceTempView("orders_raw_temp")
+    .withColumn("source_file", col("_metadata.file_path"))
 ```
 
-Benefits:
+**Managed file events** (recommended production -- Premium + Unity Catalog):
+```python
+spark.readStream
+    .format("cloudFiles")
+    .option("cloudFiles.format", "parquet")
+    .option("cloudFiles.useManagedFileEvents", "true")
+    .option("cloudFiles.schemaLocation", "s3://my-lakehouse/schemas/orders")
+    .load("s3://my-lakehouse/raw/orders/")
+    .withColumn("source_file", col("_metadata.file_path"))
+```
+
+**Classic notifications** (legacy -- more moving parts):
+```python
+spark.readStream
+    .format("cloudFiles")
+    .option("cloudFiles.format", "parquet")
+    .option("cloudFiles.useNotifications", "true")
+    .option("cloudFiles.region", "us-east-1")  # must match bucket region
+    .option("cloudFiles.schemaLocation", "s3://my-lakehouse/schemas/orders")
+    .load("s3://my-lakehouse/raw/orders/")
+```
+
+**Note**: Use `_metadata.file_path` instead of `input_file_name()` in Unity Catalog.
+
+See **Day 19: Structured Streaming** for hands-on labs with all three modes.
+
+Key benefits:
 - Automatically discovers new files as they arrive in S3
 - Handles schema inference and evolution
 - Exactly-once processing guarantees

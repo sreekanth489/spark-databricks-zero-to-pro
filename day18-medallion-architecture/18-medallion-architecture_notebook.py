@@ -264,34 +264,73 @@ print(f"Bronze layer: {df_bronze.count()} records ingested")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### 1b. Auto Loader Pattern (Production Reference)
+# MAGIC ### 1b. Auto Loader Patterns (Production Reference)
 # MAGIC
-# MAGIC This is the **recommended production pattern** for ingesting files from S3.
-# MAGIC Auto Loader automatically discovers new files and processes them incrementally.
+# MAGIC Auto Loader (`cloudFiles`) is the recommended way to ingest files from S3.
+# MAGIC Three modes are available on AWS:
 # MAGIC
-# MAGIC Two modes are available:
-# MAGIC - **Directory listing mode** (default): polls S3 directory for new files
-# MAGIC - **File notification mode**: uses S3 event notifications via SQS for near-real-time detection
-# MAGIC
-# MAGIC See **Day 19: Structured Streaming** for hands-on Auto Loader labs.
-# MAGIC
+# MAGIC **Track A: Directory Listing** (recommended starter path)
 # MAGIC ```python
-# MAGIC # Production Auto Loader with file notification mode (S3 + SQS)
 # MAGIC (spark.readStream
 # MAGIC     .format("cloudFiles")
 # MAGIC     .option("cloudFiles.format", "parquet")
-# MAGIC     .option("cloudFiles.useNotifications", "true")  # uses S3 -> SQS notifications
+# MAGIC     .option("cloudFiles.useNotifications", "false")
+# MAGIC     .option("cloudFiles.includeExistingFiles", "true")
 # MAGIC     .option("cloudFiles.schemaLocation", f"{checkpoint_path}/orders_raw_schema")
 # MAGIC     .load(f"{raw_data_path}/orders/")
 # MAGIC     .withColumn("load_time", current_timestamp())
-# MAGIC     .withColumn("source_file", input_file_name())
+# MAGIC     .withColumn("source_file", col("_metadata.file_path"))
 # MAGIC     .writeStream
 # MAGIC     .format("delta")
 # MAGIC     .option("checkpointLocation", f"{checkpoint_path}/orders_bronze")
 # MAGIC     .outputMode("append")
+# MAGIC     .trigger(availableNow=True)
 # MAGIC     .table("orders_bronze")
 # MAGIC )
 # MAGIC ```
+# MAGIC
+# MAGIC **Track B: Managed File Events** (recommended production path, Premium + Unity Catalog)
+# MAGIC ```python
+# MAGIC (spark.readStream
+# MAGIC     .format("cloudFiles")
+# MAGIC     .option("cloudFiles.format", "parquet")
+# MAGIC     .option("cloudFiles.useManagedFileEvents", "true")
+# MAGIC     .option("cloudFiles.schemaLocation", f"{checkpoint_path}/orders_raw_schema")
+# MAGIC     .load(f"{raw_data_path}/orders/")
+# MAGIC     .withColumn("load_time", current_timestamp())
+# MAGIC     .withColumn("source_file", col("_metadata.file_path"))
+# MAGIC     .writeStream
+# MAGIC     .format("delta")
+# MAGIC     .option("checkpointLocation", f"{checkpoint_path}/orders_bronze")
+# MAGIC     .outputMode("append")
+# MAGIC     .trigger(availableNow=True)
+# MAGIC     .table("orders_bronze")
+# MAGIC )
+# MAGIC ```
+# MAGIC
+# MAGIC **Track C: Classic Notifications** (legacy, more moving parts)
+# MAGIC ```python
+# MAGIC (spark.readStream
+# MAGIC     .format("cloudFiles")
+# MAGIC     .option("cloudFiles.format", "parquet")
+# MAGIC     .option("cloudFiles.useNotifications", "true")
+# MAGIC     .option("cloudFiles.region", "us-east-1")  # MUST match S3 bucket region
+# MAGIC     .option("cloudFiles.schemaLocation", f"{checkpoint_path}/orders_raw_schema")
+# MAGIC     .load(f"{raw_data_path}/orders/")
+# MAGIC     .withColumn("load_time", current_timestamp())
+# MAGIC     .withColumn("source_file", col("_metadata.file_path"))
+# MAGIC     .writeStream
+# MAGIC     .format("delta")
+# MAGIC     .option("checkpointLocation", f"{checkpoint_path}/orders_bronze")
+# MAGIC     .outputMode("append")
+# MAGIC     .trigger(availableNow=True)
+# MAGIC     .table("orders_bronze")
+# MAGIC )
+# MAGIC ```
+# MAGIC
+# MAGIC **Note**: Use `_metadata.file_path` instead of `input_file_name()` in Unity Catalog.
+# MAGIC
+# MAGIC See **Day 19: Structured Streaming** for hands-on Auto Loader labs with all three modes.
 
 # COMMAND ----------
 

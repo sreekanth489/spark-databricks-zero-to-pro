@@ -6,34 +6,35 @@
 # MAGIC %md
 # MAGIC # Day 19: Structured Streaming & Auto Loader
 # MAGIC
-# MAGIC **Objective**: Master Auto Loader for incremental file ingestion from AWS S3 with both file notification and directory listing modes
+# MAGIC **Objective**: Master Auto Loader for incremental file ingestion from AWS S3 using three distinct modes
 # MAGIC
 # MAGIC In this lab we will:
 # MAGIC 1. Set up Unity Catalog schema and S3 paths
 # MAGIC 2. Generate sample data files to simulate data landing in S3
-# MAGIC 3. **Scenario 1**: Auto Loader with **directory listing mode** (zero infrastructure setup)
-# MAGIC 4. **Scenario 2**: Auto Loader with **file notification mode** (S3 + SQS for near-real-time)
-# MAGIC 5. Demonstrate incremental processing with new file batches
-# MAGIC 6. Handle schema inference, evolution, and rescue columns
-# MAGIC 7. Compare trigger strategies: `availableNow` vs `processingTime`
-# MAGIC 8. Monitor and manage streaming queries
+# MAGIC 3. **Track A**: Auto Loader with **directory listing mode** (simplest, always works)
+# MAGIC 4. **Track B**: Auto Loader with **managed file events** (modern, Unity Catalog + Premium)
+# MAGIC 5. **Track C**: Auto Loader with **classic file notifications** (older, more moving parts)
+# MAGIC 6. Demonstrate incremental processing with new file batches
+# MAGIC 7. Handle schema inference, evolution, and rescue columns
+# MAGIC 8. Compare trigger strategies and monitor streaming queries
+# MAGIC 9. Build a full Bronze -> Silver streaming pipeline
 # MAGIC
-# MAGIC **Architecture**:
+# MAGIC **Three Auto Loader Modes on AWS**:
 # MAGIC ```
-# MAGIC Files land in S3
-# MAGIC       |
-# MAGIC       v
-# MAGIC Auto Loader (cloudFiles)
-# MAGIC   |                    |
-# MAGIC   v                    v
-# MAGIC Directory Listing    File Notification
-# MAGIC (polls S3 dir)       (S3 -> SQS events)
-# MAGIC   |                    |
-# MAGIC   v                    v
-# MAGIC Bronze Delta Table (append-only, with metadata)
-# MAGIC       |
-# MAGIC       v
-# MAGIC Silver / Gold layers (downstream)
+# MAGIC Track A: Directory Listing (recommended starter path)
+# MAGIC   cloudFiles.useNotifications = false
+# MAGIC   Auto Loader scans S3 directory for new files
+# MAGIC   Zero infrastructure setup
+# MAGIC
+# MAGIC Track B: Managed File Events (recommended production path)
+# MAGIC   cloudFiles.useManagedFileEvents = true
+# MAGIC   Requires Unity Catalog external location with file events enabled
+# MAGIC   Modern, cleaner than classic notifications
+# MAGIC
+# MAGIC Track C: Classic File Notifications (appendix / legacy)
+# MAGIC   cloudFiles.useNotifications = true
+# MAGIC   Auto Loader auto-manages S3 bucket notifications + SNS/SQS per stream
+# MAGIC   More moving parts, more AWS-side failure modes
 # MAGIC ```
 # MAGIC
 # MAGIC **Platform**: Databricks on AWS with Unity Catalog
@@ -99,7 +100,7 @@ print(f"Bad records:  {bad_records_path}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Parquet Files (for Scenario 1 - Directory Listing)
+# MAGIC ### Parquet Files (for Track A - Directory Listing)
 
 # COMMAND ----------
 
@@ -135,7 +136,7 @@ df_batch1.display()
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### JSON Files (for Scenario 2 - File Notification)
+# MAGIC ### JSON Files (for Track B and C - Notification Modes)
 
 # COMMAND ----------
 
@@ -172,25 +173,32 @@ df_events_batch1.display()
 
 # MAGIC %md
 # MAGIC ---
-# MAGIC ## Scenario 1: Auto Loader with Directory Listing Mode
+# MAGIC ## Track A: Auto Loader with Directory Listing Mode
 # MAGIC
-# MAGIC **Directory listing** is the default mode. Auto Loader:
+# MAGIC **This is the recommended starter path.** Directory listing is the default mode.
+# MAGIC
+# MAGIC How it works:
 # MAGIC 1. Scans the S3 directory for files
-# MAGIC 2. Compares against files already processed (tracked in checkpoint)
+# MAGIC 2. Compares against files already processed (tracked in checkpoint via RocksDB)
 # MAGIC 3. Reads only new/unprocessed files
 # MAGIC 4. Uses incremental listing optimization on subsequent runs
 # MAGIC
-# MAGIC **Advantages**: Zero infrastructure setup, works immediately
+# MAGIC **Why start here**:
+# MAGIC - Least setup -- zero infrastructure required
+# MAGIC - Most reliable -- works on Free and Premium editions
+# MAGIC - Great for learning, development, and moderate-scale production
 # MAGIC
-# MAGIC **Best for**: Development, moderate file volumes, scheduled batch ingestion
+# MAGIC **Key option**: `cloudFiles.useNotifications = false`
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### 1a. Basic Auto Loader - Directory Listing (Parquet)
+# MAGIC ### A1. Basic Auto Loader - Directory Listing (Parquet)
 # MAGIC
-# MAGIC This is the simplest way to start with Auto Loader.
 # MAGIC No SQS, no SNS, no event notifications -- just point to S3 and go.
+# MAGIC
+# MAGIC **Important**: In Unity Catalog, use `_metadata.file_path` and `_metadata.file_name`
+# MAGIC instead of `input_file_name()` for source file tracking.
 
 # COMMAND ----------
 
@@ -203,9 +211,9 @@ df_stream_dir = (
         .option("cloudFiles.includeExistingFiles", "true")     # process existing files on first run
         .option("cloudFiles.schemaLocation", f"{schema_path}/dir_listing_orders")
         .load(f"{raw_data_path}/parquet_orders/")
-        # Add ingestion metadata
+        # Add ingestion metadata using _metadata (Unity Catalog safe)
         .withColumn("load_time", current_timestamp())
-        .withColumn("source_file", input_file_name())
+        .withColumn("source_file", col("_metadata.file_path"))
 )
 
 # Write to Bronze table using trigger(availableNow=True)
@@ -241,9 +249,10 @@ print("Directory listing stream completed")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### 1b. Incremental Ingestion - Add New Files
+# MAGIC ### A2. Incremental Ingestion - Add New Files
 # MAGIC
-# MAGIC Now simulate new data arriving in S3. Auto Loader will detect and process ONLY the new files.
+# MAGIC Simulate new data arriving in S3. Auto Loader will detect and process ONLY the new files
+# MAGIC because the checkpoint tracks which files have already been processed.
 
 # COMMAND ----------
 
@@ -267,7 +276,7 @@ print(f"Batch 2: {df_batch2.count()} new orders written to S3")
 
 # COMMAND ----------
 
-# Re-run the SAME Auto Loader stream -- it will only process batch2 (new files)
+# Re-run the SAME Auto Loader stream with SAME checkpoint -- only processes batch2
 df_stream_dir_incr = (
     spark.readStream
         .format("cloudFiles")
@@ -277,7 +286,7 @@ df_stream_dir_incr = (
         .option("cloudFiles.schemaLocation", f"{schema_path}/dir_listing_orders")
         .load(f"{raw_data_path}/parquet_orders/")
         .withColumn("load_time", current_timestamp())
-        .withColumn("source_file", input_file_name())
+        .withColumn("source_file", col("_metadata.file_path"))
 )
 
 query_dir_incr = (
@@ -303,7 +312,7 @@ print("Incremental ingestion completed -- only new files processed")
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC -- See which source files were ingested
+# MAGIC -- See which source files were ingested and when
 # MAGIC SELECT source_file, COUNT(*) as records, MIN(load_time) as ingested_at
 # MAGIC FROM bronze_orders_dir_listing
 # MAGIC GROUP BY source_file
@@ -312,7 +321,7 @@ print("Incremental ingestion completed -- only new files processed")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### 1c. Directory Listing - Advanced Options
+# MAGIC ### A3. Directory Listing - Advanced Options
 # MAGIC
 # MAGIC Control ingestion rate, file filtering, and subdirectory scanning.
 
@@ -334,7 +343,7 @@ df_stream_advanced = (
         .option("cloudFiles.schemaLocation", f"{schema_path}/dir_listing_advanced")
         .load(f"{raw_data_path}/parquet_orders/")
         .withColumn("load_time", current_timestamp())
-        .withColumn("source_file", input_file_name())
+        .withColumn("source_file", col("_metadata.file_path"))
 )
 
 # Preview the stream schema (does not start processing)
@@ -345,118 +354,258 @@ df_stream_advanced.printSchema()
 
 # MAGIC %md
 # MAGIC ---
-# MAGIC ## Scenario 2: Auto Loader with File Notification Mode (S3 + SQS)
+# MAGIC ## Track B: Auto Loader with Managed File Events (Recommended Production)
 # MAGIC
-# MAGIC **File notification mode** uses AWS infrastructure for near-real-time file detection:
-# MAGIC ```
-# MAGIC S3 Bucket Event -> SNS Topic -> SQS Queue -> Auto Loader
-# MAGIC ```
+# MAGIC **This is the modern, recommended production path** on Databricks AWS Premium.
 # MAGIC
-# MAGIC **Advantages**: Near-real-time (seconds), scales to millions of files, lower S3 API costs
+# MAGIC How it works:
+# MAGIC 1. You create a **Unity Catalog external location** pointing to your S3 prefix
+# MAGIC 2. You **enable file events** on that external location
+# MAGIC 3. Databricks manages the SNS/SQS infrastructure behind the scenes
+# MAGIC 4. Auto Loader receives near-real-time notifications when new files land
 # MAGIC
-# MAGIC **Best for**: Production workloads, high-volume ingestion, low-latency requirements
+# MAGIC **Why use managed file events over classic notifications**:
+# MAGIC - Cleaner setup -- no per-stream SNS/SQS resource management
+# MAGIC - Better integration with Unity Catalog governance
+# MAGIC - Databricks manages the lifecycle of notification resources
+# MAGIC - No need for broad SNS/SQS IAM permissions on the Databricks runtime role
 # MAGIC
-# MAGIC ### How it works:
-# MAGIC 1. When a new file lands in S3, an event notification is sent
-# MAGIC 2. The event is published to an SNS topic
-# MAGIC 3. An SQS queue subscribed to the topic receives the message
-# MAGIC 4. Auto Loader polls the SQS queue and reads only the new file(s)
+# MAGIC **Prerequisites**:
+# MAGIC 1. Databricks Premium workspace
+# MAGIC 2. Storage credential created in Unity Catalog for your S3 bucket
+# MAGIC 3. External location created for the S3 prefix
+# MAGIC 4. File events enabled on the external location
 # MAGIC
-# MAGIC **Two setup options**:
-# MAGIC - **Auto-setup**: Databricks creates SNS/SQS resources (requires broad IAM permissions)
-# MAGIC - **Pre-configured**: You provide existing SQS queue URL (recommended for production)
+# MAGIC **Key option**: `cloudFiles.useManagedFileEvents = true`
+# MAGIC
+# MAGIC **Do NOT combine** with `cloudFiles.useNotifications = true` -- they are mutually exclusive.
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### 2a. File Notification - Auto Setup
+# MAGIC ### B1. Setup Checklist (run once per environment)
 # MAGIC
-# MAGIC Databricks automatically creates SNS topic, SQS queue, and S3 event notifications.
-# MAGIC Requires IAM permissions for `sns:*`, `sqs:*`, and `s3:PutBucketNotification`.
+# MAGIC Before using managed file events, complete these steps in your Databricks workspace:
 # MAGIC
-# MAGIC **Note**: This cell requires appropriate IAM permissions. If you don't have them,
-# MAGIC skip to section 2b for the pre-configured approach, or use directory listing (Scenario 1).
+# MAGIC ```sql
+# MAGIC -- Step 1: Create storage credential (Admin only)
+# MAGIC -- This maps an IAM role to Unity Catalog
+# MAGIC CREATE STORAGE CREDENTIAL my_s3_credential
+# MAGIC WITH (AWS_IAM_ROLE = 'arn:aws:iam::015747470350:role/databricks-s3-ingest-8a85f-db_s3_iam');
+# MAGIC
+# MAGIC -- Step 2: Create external location for the S3 prefix
+# MAGIC CREATE EXTERNAL LOCATION streaming_lab_location
+# MAGIC URL 's3://databricks-zero-to-pro/streaming_lab/'
+# MAGIC WITH (STORAGE CREDENTIAL my_s3_credential);
+# MAGIC
+# MAGIC -- Step 3: Enable file events on the external location
+# MAGIC ALTER EXTERNAL LOCATION streaming_lab_location
+# MAGIC ENABLE FILE EVENTS;
+# MAGIC ```
+# MAGIC
+# MAGIC The IAM role needs these permissions on the S3 bucket:
+# MAGIC - `s3:GetBucketNotification`, `s3:PutBucketNotification`, `s3:GetBucketLocation`
+# MAGIC - Standard object access: `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:ListBucket`
 
 # COMMAND ----------
 
-# Auto Loader with file notification mode - auto setup
-# Databricks will create SNS topic, SQS queue, and S3 event notification
-df_stream_notify_auto = (
+# MAGIC %md
+# MAGIC ### B2. Managed File Events - JSON Ingestion
+
+# COMMAND ----------
+
+# Auto Loader with managed file events (modern production pattern)
+df_stream_managed = (
     spark.readStream
         .format("cloudFiles")
         .option("cloudFiles.format", "json")
-        .option("cloudFiles.useNotifications", "true")           # enable file notification mode
-        # Schema handling for JSON (more important since JSON has no embedded schema)
-        .option("cloudFiles.inferColumnTypes", "true")           # infer actual types, not just strings
-        .option("cloudFiles.schemaLocation", f"{schema_path}/notification_events")
-        .option("cloudFiles.schemaEvolutionMode", "addNewColumns")  # auto-add new columns
+        .option("cloudFiles.useManagedFileEvents", "true")     # managed file events mode
+        .option("cloudFiles.inferColumnTypes", "true")          # infer actual types, not just strings
+        .option("cloudFiles.schemaLocation", f"{schema_path}/managed_events")
+        .option("cloudFiles.schemaEvolutionMode", "addNewColumns")
         .load(f"{raw_data_path}/json_events/")
-        # Add metadata
+        # Use _metadata for Unity Catalog-safe source tracking
         .withColumn("load_time", current_timestamp())
-        .withColumn("source_file", input_file_name())
+        .withColumn("source_file", col("_metadata.file_path"))
+        .withColumn("source_file_name", col("_metadata.file_name"))
 )
 
-# Write to Bronze with trigger(availableNow=True) for batch-style processing
-query_notify_auto = (
-    df_stream_notify_auto.writeStream
+query_managed = (
+    df_stream_managed.writeStream
         .format("delta")
-        .option("checkpointLocation", f"{checkpoint_path}/notification_bronze")
+        .option("checkpointLocation", f"{checkpoint_path}/managed_bronze")
         .outputMode("append")
         .trigger(availableNow=True)
-        .table("bronze_events_notification")
+        .table("bronze_events_managed")
 )
 
-query_notify_auto.awaitTermination()
-print("File notification (auto-setup) stream completed")
+query_managed.awaitTermination()
+print("Managed file events stream completed")
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC SELECT * FROM bronze_events_notification LIMIT 10
+# MAGIC SELECT * FROM bronze_events_managed LIMIT 10
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC SELECT COUNT(*) as total_events FROM bronze_events_notification
+# MAGIC SELECT COUNT(*) as total_events FROM bronze_events_managed
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### 2b. File Notification - Pre-Configured SQS Queue (Production Recommended)
+# MAGIC ### B3. Incremental Ingestion with Managed File Events
+
+# COMMAND ----------
+
+# Generate Events Batch 2
+random.seed(200)
+events_batch2 = []
+for i in range(26, 51):
+    events_batch2.append((
+        f"EVT-{i:05d}",
+        random.choice([f"C{j:03d}" for j in range(1, 9)]),
+        random.choice(["page_view", "add_to_cart", "checkout", "purchase", "search"]),
+        random.choice(["homepage", "product_detail", "cart", "checkout", "search_results"]),
+        random.choice(["mobile", "desktop", "tablet"]),
+        f"session-{random.randint(1000, 9999)}",
+        base_ts + random.randint(86400 * 7, 86400 * 14),
+    ))
+
+df_events_batch2 = spark.createDataFrame(events_batch2, events_schema)
+df_events_batch2.write.mode("overwrite").json(f"{raw_data_path}/json_events/batch2")
+print(f"Events Batch 2: {df_events_batch2.count()} new events written to S3")
+
+# COMMAND ----------
+
+# Re-run with same checkpoint -- only processes batch2
+query_managed_incr = (
+    spark.readStream
+        .format("cloudFiles")
+        .option("cloudFiles.format", "json")
+        .option("cloudFiles.useManagedFileEvents", "true")
+        .option("cloudFiles.inferColumnTypes", "true")
+        .option("cloudFiles.schemaLocation", f"{schema_path}/managed_events")
+        .option("cloudFiles.schemaEvolutionMode", "addNewColumns")
+        .load(f"{raw_data_path}/json_events/")
+        .withColumn("load_time", current_timestamp())
+        .withColumn("source_file", col("_metadata.file_path"))
+        .withColumn("source_file_name", col("_metadata.file_name"))
+        .writeStream
+        .format("delta")
+        .option("checkpointLocation", f"{checkpoint_path}/managed_bronze")  # same checkpoint
+        .outputMode("append")
+        .trigger(availableNow=True)
+        .table("bronze_events_managed")
+)
+
+query_managed_incr.awaitTermination()
+print("Incremental managed file events ingestion completed")
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC -- Verify both batches ingested
+# MAGIC SELECT source_file, COUNT(*) as records, MIN(load_time) as ingested_at
+# MAGIC FROM bronze_events_managed
+# MAGIC GROUP BY source_file
+# MAGIC ORDER BY ingested_at
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT COUNT(*) as total_events FROM bronze_events_managed
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ---
+# MAGIC ## Track C: Classic File Notifications (Appendix)
 # MAGIC
-# MAGIC In production, you typically pre-create the SQS queue and S3 notifications
-# MAGIC through Terraform/CloudFormation, then pass the queue URL to Auto Loader.
+# MAGIC **This is the older approach** where Auto Loader auto-manages S3 bucket notifications
+# MAGIC plus SNS/SQS resources per stream. It has more moving parts and more AWS-side failure modes.
 # MAGIC
-# MAGIC This gives you full control over IAM, encryption, dead-letter queues, and lifecycle.
+# MAGIC **Use this only if**:
+# MAGIC - You cannot use managed file events (no Unity Catalog external location)
+# MAGIC - You need fine-grained control over SNS/SQS resources
+# MAGIC - You are on a non-Premium workspace without Unity Catalog
+# MAGIC
+# MAGIC **Key option**: `cloudFiles.useNotifications = true`
+# MAGIC
+# MAGIC **Important**: You MUST set `cloudFiles.region` to match your S3 bucket region,
+# MAGIC otherwise you will get a `PermanentRedirect` error.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### C1. Classic Notifications - Auto Setup
+# MAGIC
+# MAGIC Databricks automatically creates SNS topic, SQS queue, and S3 event notifications.
+# MAGIC
+# MAGIC **Required IAM permissions** on the Databricks runtime role:
+# MAGIC - `s3:GetBucketNotification`, `s3:PutBucketNotification`
+# MAGIC - `sns:CreateTopic`, `sns:DeleteTopic`, `sns:GetTopicAttributes`, `sns:Subscribe`, etc.
+# MAGIC - `sqs:CreateQueue`, `sqs:DeleteQueue`, `sqs:ReceiveMessage`, `sqs:DeleteMessage`, etc.
+# MAGIC
+# MAGIC **Plus a bucket policy** granting the Databricks role `s3:GetBucketNotification` on the bucket.
+
+# COMMAND ----------
+
+# Classic file notifications -- requires IAM permissions and correct region
+df_stream_classic = (
+    spark.readStream
+        .format("cloudFiles")
+        .option("cloudFiles.format", "parquet")
+        .option("cloudFiles.useNotifications", "true")
+        .option("cloudFiles.region", "us-east-1")              # MUST match your S3 bucket region
+        .option("cloudFiles.includeExistingFiles", "true")
+        .option("cloudFiles.schemaLocation", f"{schema_path}/classic_notif_orders")
+        .load(f"{raw_data_path}/parquet_orders/")
+        .withColumn("load_time", current_timestamp())
+        .withColumn("source_file", col("_metadata.file_path"))
+)
+
+query_classic = (
+    df_stream_classic.writeStream
+        .format("delta")
+        .option("checkpointLocation", f"{checkpoint_path}/classic_notif_bronze")
+        .outputMode("append")
+        .trigger(availableNow=True)
+        .table("bronze_orders_classic_notif")
+)
+
+query_classic.awaitTermination()
+print("Classic notification stream completed")
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT COUNT(*) as total_records FROM bronze_orders_classic_notif
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### C2. Classic Notifications - Pre-Configured SQS Queue
+# MAGIC
+# MAGIC In production, pre-create the SQS queue and S3 notifications via Terraform/CloudFormation,
+# MAGIC then pass the queue URL to Auto Loader for full control over IAM, encryption, and lifecycle.
 # MAGIC
 # MAGIC ```python
-# MAGIC # Production pattern with pre-configured SQS queue
 # MAGIC df_stream_preconfigured = (
 # MAGIC     spark.readStream
 # MAGIC         .format("cloudFiles")
 # MAGIC         .option("cloudFiles.format", "json")
 # MAGIC         .option("cloudFiles.useNotifications", "true")
-# MAGIC         # Point to your pre-configured SQS queue
 # MAGIC         .option("cloudFiles.queueUrl",
 # MAGIC                 "https://sqs.us-east-1.amazonaws.com/123456789012/my-autoloader-queue")
-# MAGIC         # Optional: specify the region if different from workspace
 # MAGIC         .option("cloudFiles.region", "us-east-1")
-# MAGIC         # Schema
 # MAGIC         .option("cloudFiles.inferColumnTypes", "true")
 # MAGIC         .option("cloudFiles.schemaLocation", "s3://bucket/schemas/events")
 # MAGIC         .option("cloudFiles.schemaEvolutionMode", "addNewColumns")
 # MAGIC         .load("s3://my-data-bucket/raw/events/")
 # MAGIC         .withColumn("load_time", current_timestamp())
-# MAGIC         .withColumn("source_file", input_file_name())
-# MAGIC )
-# MAGIC
-# MAGIC query_preconfigured = (
-# MAGIC     df_stream_preconfigured.writeStream
-# MAGIC         .format("delta")
-# MAGIC         .option("checkpointLocation", "s3://bucket/checkpoints/events_bronze")
-# MAGIC         .outputMode("append")
-# MAGIC         .trigger(processingTime="30 seconds")  # continuous near-real-time
-# MAGIC         .table("bronze_events")
+# MAGIC         .withColumn("source_file", col("_metadata.file_path"))
 # MAGIC )
 # MAGIC ```
 # MAGIC
@@ -500,72 +649,6 @@ print("File notification (auto-setup) stream completed")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### 2c. Incremental Ingestion with File Notifications
-# MAGIC
-# MAGIC Add new JSON files and verify that only new files are processed.
-
-# COMMAND ----------
-
-# Generate Events Batch 2
-random.seed(200)
-events_batch2 = []
-for i in range(26, 51):
-    events_batch2.append((
-        f"EVT-{i:05d}",
-        random.choice([f"C{j:03d}" for j in range(1, 9)]),
-        random.choice(["page_view", "add_to_cart", "checkout", "purchase", "search"]),
-        random.choice(["homepage", "product_detail", "cart", "checkout", "search_results"]),
-        random.choice(["mobile", "desktop", "tablet"]),
-        f"session-{random.randint(1000, 9999)}",
-        base_ts + random.randint(86400 * 7, 86400 * 14),
-    ))
-
-df_events_batch2 = spark.createDataFrame(events_batch2, events_schema)
-df_events_batch2.write.mode("overwrite").json(f"{raw_data_path}/json_events/batch2")
-print(f"Events Batch 2: {df_events_batch2.count()} new events written to S3")
-
-# COMMAND ----------
-
-# Re-run with same checkpoint -- only processes batch2
-query_notify_incr = (
-    spark.readStream
-        .format("cloudFiles")
-        .option("cloudFiles.format", "json")
-        .option("cloudFiles.useNotifications", "true")
-        .option("cloudFiles.inferColumnTypes", "true")
-        .option("cloudFiles.schemaLocation", f"{schema_path}/notification_events")
-        .option("cloudFiles.schemaEvolutionMode", "addNewColumns")
-        .load(f"{raw_data_path}/json_events/")
-        .withColumn("load_time", current_timestamp())
-        .withColumn("source_file", input_file_name())
-        .writeStream
-        .format("delta")
-        .option("checkpointLocation", f"{checkpoint_path}/notification_bronze")  # same checkpoint
-        .outputMode("append")
-        .trigger(availableNow=True)
-        .table("bronze_events_notification")
-)
-
-query_notify_incr.awaitTermination()
-print("Incremental notification ingestion completed")
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC -- Verify both batches ingested
-# MAGIC SELECT source_file, COUNT(*) as records, MIN(load_time) as ingested_at
-# MAGIC FROM bronze_events_notification
-# MAGIC GROUP BY source_file
-# MAGIC ORDER BY ingested_at
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC SELECT COUNT(*) as total_events FROM bronze_events_notification
-
-# COMMAND ----------
-
-# MAGIC %md
 # MAGIC ---
 # MAGIC ## Schema Inference, Evolution, and Rescue Columns
 
@@ -576,12 +659,13 @@ print("Incremental notification ingestion completed")
 # MAGIC
 # MAGIC Auto Loader infers the schema from source files and persists it to `schemaLocation`.
 # MAGIC On subsequent runs, the persisted schema is used (no re-inference needed).
+# MAGIC This makes restarts fast -- schema inference only happens on first execution.
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC -- View the inferred schema of the notification table
-# MAGIC DESCRIBE bronze_events_notification
+# MAGIC -- View the inferred schema of the managed events table
+# MAGIC DESCRIBE bronze_events_managed
 
 # COMMAND ----------
 
@@ -628,28 +712,29 @@ print(f"Events Batch 3: {df_events_batch3.count()} events with NEW 'referrer' co
 
 # Auto Loader with schema evolution enabled
 # With schemaEvolutionMode="addNewColumns", the stream will:
-# 1. Detect the new 'referrer' column
-# 2. Add it to the schema
-# 3. Restart the stream to pick up the new schema
-# 4. Backfill NULL for old records that don't have the column
+# 1. Detect the new 'referrer' column in batch 3
+# 2. Update the persisted schema at schemaLocation
+# 3. Add the column to the Delta table (mergeSchema=true)
+# 4. Old records retain NULL for the new column
 query_evolution = (
     spark.readStream
         .format("cloudFiles")
         .option("cloudFiles.format", "json")
-        .option("cloudFiles.useNotifications", "true")
+        .option("cloudFiles.useManagedFileEvents", "true")
         .option("cloudFiles.inferColumnTypes", "true")
-        .option("cloudFiles.schemaLocation", f"{schema_path}/notification_events")
+        .option("cloudFiles.schemaLocation", f"{schema_path}/managed_events")
         .option("cloudFiles.schemaEvolutionMode", "addNewColumns")
         .load(f"{raw_data_path}/json_events/")
         .withColumn("load_time", current_timestamp())
-        .withColumn("source_file", input_file_name())
+        .withColumn("source_file", col("_metadata.file_path"))
+        .withColumn("source_file_name", col("_metadata.file_name"))
         .writeStream
         .format("delta")
-        .option("checkpointLocation", f"{checkpoint_path}/notification_bronze")
+        .option("checkpointLocation", f"{checkpoint_path}/managed_bronze")
         .option("mergeSchema", "true")    # allow Delta table schema to evolve
         .outputMode("append")
         .trigger(availableNow=True)
-        .table("bronze_events_notification")
+        .table("bronze_events_managed")
 )
 
 query_evolution.awaitTermination()
@@ -659,15 +744,14 @@ print("Schema evolution stream completed")
 
 # MAGIC %sql
 # MAGIC -- Verify schema evolution: 'referrer' column should now exist
-# MAGIC -- Old records will have NULL for referrer, new records will have values
-# MAGIC DESCRIBE bronze_events_notification
+# MAGIC DESCRIBE bronze_events_managed
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC -- Check the new column
-# MAGIC SELECT event_id, event_type, device, referrer, source_file
-# MAGIC FROM bronze_events_notification
+# MAGIC -- Check the new column: batch 3 records have referrer values
+# MAGIC SELECT event_id, event_type, device, referrer, source_file_name
+# MAGIC FROM bronze_events_managed
 # MAGIC WHERE referrer IS NOT NULL
 # MAGIC LIMIT 10
 
@@ -680,7 +764,7 @@ print("Schema evolution stream completed")
 # MAGIC          ELSE 'Has referrer (new schema)'
 # MAGIC     END as schema_version,
 # MAGIC     COUNT(*) as record_count
-# MAGIC FROM bronze_events_notification
+# MAGIC FROM bronze_events_managed
 # MAGIC GROUP BY 1
 
 # COMMAND ----------
@@ -726,7 +810,6 @@ print("Schema evolution stream completed")
 # MAGIC
 # MAGIC Processes ALL available data in multiple micro-batches, then stops.
 # MAGIC Ideal for Databricks Workflows scheduled to run every N minutes/hours.
-# MAGIC
 # MAGIC This is what we've been using throughout this lab.
 # MAGIC
 # MAGIC ```python
@@ -769,7 +852,7 @@ print("Schema evolution stream completed")
 # MAGIC
 # MAGIC Processes exactly ONE micro-batch then stops. **Deprecated** in favor of `availableNow`.
 # MAGIC
-# MAGIC The key difference: `once` processes a single micro-batch (may leave data behind),
+# MAGIC Key difference: `once` processes a single micro-batch (may leave data behind),
 # MAGIC while `availableNow` processes ALL available data across multiple micro-batches.
 # MAGIC
 # MAGIC ```python
@@ -802,11 +885,6 @@ print("Schema evolution stream completed")
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ### Check Active Streams
-
-# COMMAND ----------
-
 # List all currently active streaming queries
 active_streams = spark.streams.active
 print(f"Active streams: {len(active_streams)}")
@@ -819,7 +897,7 @@ for stream in active_streams:
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Verify Delta Table History
+# MAGIC ### Delta Table History
 
 # COMMAND ----------
 
@@ -830,8 +908,8 @@ for stream in active_streams:
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC -- View ingestion history for the notification Bronze table
-# MAGIC DESCRIBE HISTORY bronze_events_notification
+# MAGIC -- View ingestion history for the managed events Bronze table
+# MAGIC DESCRIBE HISTORY bronze_events_managed
 
 # COMMAND ----------
 
@@ -839,13 +917,8 @@ for stream in active_streams:
 # MAGIC ---
 # MAGIC ## Full Production Pipeline: Auto Loader -> Bronze -> Silver
 # MAGIC
-# MAGIC Putting it all together: a production-ready pipeline that ingests files from S3
-# MAGIC into Bronze, then streams Bronze to Silver with transformations.
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Bronze -> Silver Streaming Pipeline
+# MAGIC Putting it all together: stream from the directory listing Bronze table
+# MAGIC into a Silver table with transformations applied.
 
 # COMMAND ----------
 
@@ -906,30 +979,62 @@ print("Bronze -> Silver streaming pipeline completed")
 
 # MAGIC %md
 # MAGIC ---
-# MAGIC ## Summary: Directory Listing vs File Notification
+# MAGIC ## Common Errors and Troubleshooting
 # MAGIC
-# MAGIC | Feature | Directory Listing | File Notification |
-# MAGIC |---------|-------------------|-------------------|
-# MAGIC | **Setup** | `cloudFiles.useNotifications = false` | `cloudFiles.useNotifications = true` |
-# MAGIC | **Infrastructure** | None | S3 events + SNS + SQS |
-# MAGIC | **File detection** | Polls S3 directory | Receives SQS messages |
-# MAGIC | **Latency** | Depends on trigger interval | Near-real-time (seconds) |
-# MAGIC | **Scale** | Good for < 100K files | Millions of files |
-# MAGIC | **S3 API cost** | Higher (LIST calls) | Lower (no LIST) |
-# MAGIC | **IAM needed** | S3 read only | S3, SNS, SQS |
-# MAGIC | **Best for** | Dev, moderate volume, scheduled | Prod, high volume, real-time |
+# MAGIC ### `PermanentRedirect` Error
+# MAGIC Your bucket region does not match. Set the correct AWS region:
+# MAGIC ```python
+# MAGIC .option("cloudFiles.region", "us-east-1")  # match your S3 bucket region
+# MAGIC ```
+# MAGIC
+# MAGIC ### `GetBucketNotification AccessDenied`
+# MAGIC The Databricks runtime role needs `s3:GetBucketNotification` permission.
+# MAGIC Add it to both the IAM role policy AND the S3 bucket policy.
+# MAGIC
+# MAGIC ### Managed File Events: "no matching external location found"
+# MAGIC The S3 path is not inside a Unity Catalog external location with file events enabled.
+# MAGIC Create the storage credential, create the external location, and enable file events.
+# MAGIC
+# MAGIC ### Managed File Events: fails during `sns.subscribe`
+# MAGIC The external location was found, but Databricks could not finish SNS/SQS subscription.
+# MAGIC Check SNS and SQS permissions and inspect CloudTrail for the failing AWS API.
+# MAGIC
+# MAGIC ### CloudTrail shows `anonymous` identity with `AccessDenied`
+# MAGIC This does NOT mean public internet access. It means S3 did not recognize the request
+# MAGIC as an authorized principal. Re-check:
+# MAGIC - Which IAM role the Databricks runtime actually uses
+# MAGIC - The bucket policy principal ARN
+# MAGIC - Whether you are using classic notifications vs managed file events
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ---
+# MAGIC ## Auto Loader Mode Comparison
+# MAGIC
+# MAGIC | Feature | Directory Listing | Managed File Events | Classic Notifications |
+# MAGIC |---------|-------------------|--------------------|-----------------------|
+# MAGIC | **Option** | `useNotifications=false` | `useManagedFileEvents=true` | `useNotifications=true` |
+# MAGIC | **Setup** | None | External location + file events | IAM for SNS/SQS + bucket policy |
+# MAGIC | **Infrastructure** | None | Databricks-managed | Auto Loader-managed per stream |
+# MAGIC | **Latency** | Trigger interval | Near-real-time | Near-real-time |
+# MAGIC | **Scale** | Moderate (< 100K files) | Millions+ | Millions+ |
+# MAGIC | **Edition** | Free + Premium | Premium only | Free + Premium |
+# MAGIC | **Unity Catalog** | Optional | Required | Optional |
+# MAGIC | **Cleanup** | Nothing | Databricks manages | Must teardown SNS/SQS per stream |
+# MAGIC | **Recommendation** | Starter / Dev | Production | Legacy / Appendix |
 # MAGIC
 # MAGIC ### Key Takeaways
 # MAGIC
-# MAGIC 1. **Auto Loader** (`cloudFiles`) is the recommended way to ingest files from S3 into Delta Lake
-# MAGIC 2. **Directory listing** mode requires zero setup -- start immediately
-# MAGIC 3. **File notification** mode uses S3 + SQS for near-real-time detection at scale
-# MAGIC 4. **Schema inference** is persisted to `schemaLocation` and only runs on first execution
-# MAGIC 5. **Schema evolution** with `addNewColumns` automatically adapts to new fields
-# MAGIC 6. **`trigger(availableNow=True)`** is ideal for scheduled Workflows (processes all, then stops)
-# MAGIC 7. **Checkpoints** enable exactly-once processing and fault-tolerant restarts
-# MAGIC 8. Always use a **dedicated checkpoint per stream** -- never share checkpoints
-# MAGIC 9. **Pre-configure SQS** via Terraform in production for full control over IAM and lifecycle
+# MAGIC 1. **Start with directory listing** (`useNotifications=false`) -- it always works
+# MAGIC 2. **Graduate to managed file events** (`useManagedFileEvents=true`) for production
+# MAGIC 3. **Avoid classic notifications** as your main path -- more moving parts, more failure modes
+# MAGIC 4. Use `_metadata.file_path` and `_metadata.file_name` instead of `input_file_name()` in Unity Catalog
+# MAGIC 5. **Schema inference** is persisted to `schemaLocation` and only runs once
+# MAGIC 6. **Schema evolution** with `addNewColumns` automatically adapts to new fields
+# MAGIC 7. **`trigger(availableNow=True)`** is ideal for scheduled Workflows
+# MAGIC 8. **Checkpoints** enable exactly-once processing -- never share or delete them
+# MAGIC 9. Always set `cloudFiles.region` when using classic notifications
 
 # COMMAND ----------
 
@@ -951,7 +1056,8 @@ print("All streams stopped")
 # Drop tables
 tables = [
     "bronze_orders_dir_listing",
-    "bronze_events_notification",
+    "bronze_events_managed",
+    "bronze_orders_classic_notif",
     "silver_orders_streaming",
 ]
 
@@ -977,7 +1083,7 @@ print(f"Removed all data at: {base_path}")
 # MAGIC ## Next Steps
 # MAGIC
 # MAGIC - **Day 20**: [Advanced Streaming](../day20-advanced-streaming/) -- watermarks, windows, state management
-# MAGIC - Try converting Scenario 1 to continuous processing with `processingTime`
-# MAGIC - Set up SQS + S3 notifications via Terraform for file notification mode
+# MAGIC - Try converting Track A to continuous processing with `processingTime`
+# MAGIC - Set up Unity Catalog external location with file events for Track B
 # MAGIC - Build a complete Medallion pipeline: Auto Loader -> Bronze -> Silver -> Gold
 # MAGIC - Explore Delta Live Tables (DLT) for declarative streaming pipelines

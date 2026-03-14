@@ -6,7 +6,7 @@
 
 - Understand Spark Structured Streaming fundamentals: sources, sinks, triggers, and checkpoints
 - Master Auto Loader (`cloudFiles`) for incremental file ingestion from AWS S3
-- Compare and implement both Auto Loader modes: **file notification** (S3 + SQS) and **directory listing**
+- Compare and implement three Auto Loader modes: **directory listing**, **managed file events**, and **classic notifications**
 - Build end-to-end streaming pipelines that feed into Medallion Architecture layers
 - Handle schema inference, evolution, and rescue columns in streaming workloads
 - Use triggers (`availableNow`, `processingTime`) to control micro-batch behavior
@@ -15,8 +15,9 @@
 
 - **Structured Streaming** -- Spark's stream processing engine that treats a live data stream as a continuously appended table
 - **Auto Loader** (`cloudFiles`) -- Databricks-native streaming source that incrementally ingests new files from cloud storage
-- **File Notification Mode** -- Auto Loader uses S3 event notifications (via SQS) for near-real-time file discovery
-- **Directory Listing Mode** -- Auto Loader polls the S3 directory to discover new files (no infrastructure setup needed)
+- **Directory Listing Mode** -- Auto Loader polls the S3 directory to discover new files (zero setup, recommended starter)
+- **Managed File Events** -- Auto Loader uses Unity Catalog external locations with file events for near-real-time detection (recommended production)
+- **Classic File Notifications** -- Auto Loader auto-manages SNS/SQS per stream (legacy, more moving parts)
 - **Checkpointing** -- persists streaming progress to S3 so pipelines can resume exactly where they left off
 - **Schema Inference & Evolution** -- Auto Loader can infer and adapt to schema changes in source files
 - **Trigger Modes** -- `availableNow` (process all pending then stop), `processingTime` (fixed intervals), continuous
@@ -26,8 +27,11 @@
 
 - Structured Streaming architecture: input sources, query plans, output sinks
 - Auto Loader vs traditional `spark.readStream.format("parquet")`
-- File notification mode: how S3 -> SNS -> SQS -> Auto Loader works
-- Directory listing mode: polling-based file discovery
+- Directory listing mode: polling-based file discovery (zero setup)
+- Managed file events: Unity Catalog external locations with file events (modern production)
+- Classic file notification mode: S3 -> SNS -> SQS -> Auto Loader (legacy)
+- IAM policies and bucket policies for notification modes
+- Common errors and troubleshooting (PermanentRedirect, AccessDenied, CloudTrail)
 - Schema inference with `cloudFiles.schemaLocation`
 - Schema evolution with `cloudFiles.schemaEvolutionMode`
 - Rescue column for handling unexpected data
@@ -43,7 +47,7 @@
 See the accompanying guide and notebook:
 
 - **Guide**: [`19-structured-streaming.md`](19-structured-streaming.md) -- theory, architecture diagrams, Auto Loader internals, and production patterns
-- **Notebook**: [`19-structured-streaming_notebook.py`](19-structured-streaming_notebook.py) -- runnable Databricks lab with both Auto Loader modes on AWS S3
+- **Notebook**: [`19-structured-streaming_notebook.py`](19-structured-streaming_notebook.py) -- runnable Databricks lab with three Auto Loader modes (directory listing, managed file events, classic notifications), schema evolution, and Bronze -> Silver pipeline
 
 ## Certification Tip
 
