@@ -321,28 +321,28 @@ This ensures that when new data arrives, only the new records are processed -- n
 Each medallion layer gets its own schema for clean separation, access control, and discoverability:
 ```sql
 USE CATALOG databricks_pro;
-CREATE SCHEMA medallion_bronze COMMENT 'Raw, unfiltered data with ingestion metadata';
-CREATE SCHEMA medallion_silver COMMENT 'Cleansed, deduplicated, validated data';
-CREATE SCHEMA medallion_gold   COMMENT 'Business-ready aggregations and KPIs';
+CREATE SCHEMA bronze COMMENT 'Raw, unfiltered data with ingestion metadata';
+CREATE SCHEMA silver COMMENT 'Cleansed, deduplicated, validated data';
+CREATE SCHEMA gold   COMMENT 'Business-ready aggregations and KPIs';
 ```
 
 This gives you:
 ```
 databricks_pro (catalog)
-  ├── medallion_bronze.orders          -- raw data (includes dirty records)
-  ├── medallion_silver.orders          -- cleansed, enriched orders
-  ├── medallion_silver.customers       -- customer master reference
-  ├── medallion_silver.products        -- product catalog reference
-  ├── medallion_gold.daily_revenue     -- regional dashboards
-  ├── medallion_gold.customer_summary  -- customer LTV
-  └── medallion_gold.product_performance -- merchandising
+  ├── bronze.orders          -- raw data (includes dirty records)
+  ├── silver.orders          -- cleansed, enriched orders
+  ├── silver.customers       -- customer master reference
+  ├── silver.products        -- product catalog reference
+  ├── gold.daily_revenue     -- regional dashboards
+  ├── gold.customer_summary  -- customer LTV
+  └── gold.product_performance -- merchandising
 ```
 
 ### Delta Table Properties
 
 Enable auto-optimization for all tables:
 ```sql
-ALTER TABLE medallion_bronze.orders SET TBLPROPERTIES (
+ALTER TABLE bronze.orders SET TBLPROPERTIES (
   'delta.autoOptimize.optimizeWrite' = 'true',
   'delta.autoOptimize.autoCompact' = 'true'
 );
@@ -352,8 +352,8 @@ ALTER TABLE medallion_bronze.orders SET TBLPROPERTIES (
 
 Add CHECK constraints on Silver tables to enforce data quality:
 ```sql
-ALTER TABLE medallion_silver.orders ADD CONSTRAINT valid_quantity CHECK (quantity > 0);
-ALTER TABLE medallion_silver.orders ADD CONSTRAINT valid_amount CHECK (total_amount > 0);
+ALTER TABLE silver.orders ADD CONSTRAINT valid_quantity CHECK (quantity > 0);
+ALTER TABLE silver.orders ADD CONSTRAINT valid_amount CHECK (total_amount > 0);
 ```
 
 ### MERGE for Idempotent Silver Updates
@@ -362,7 +362,7 @@ Use MERGE INTO (upsert) instead of overwrite for incremental Silver updates:
 ```python
 from delta.tables import DeltaTable
 
-silver_table = DeltaTable.forName(spark, "medallion_silver.orders")
+silver_table = DeltaTable.forName(spark, "silver.orders")
 
 (silver_table.alias("target")
     .merge(df_new_data.alias("source"), "target.order_id = source.order_id")
@@ -376,8 +376,8 @@ silver_table = DeltaTable.forName(spark, "medallion_silver.orders")
 
 Periodically compact small files and co-locate data for faster queries:
 ```sql
-OPTIMIZE medallion_silver.orders ZORDER BY (customer_id, order_date);
-OPTIMIZE medallion_gold.daily_revenue ZORDER BY (order_day, city);
+OPTIMIZE silver.orders ZORDER BY (customer_id, order_date);
+OPTIMIZE gold.daily_revenue ZORDER BY (order_day, city);
 ```
 
 ---
@@ -439,7 +439,7 @@ The **Databricks Certified Data Engineer Associate** exam tests Medallion Archit
 See the accompanying notebook: [`18-medallion-architecture_notebook.py`](18-medallion-architecture_notebook.py)
 
 The lab builds a production-grade Bronze -> Silver -> Gold pipeline for a retail scenario using:
-- **Separate Unity Catalog schemas** per layer: `medallion_bronze`, `medallion_silver`, `medallion_gold`
+- **Separate Unity Catalog schemas** per layer: `bronze`, `silver`, `gold`
 - **Dirty data in raw input** (null customer_id, zero/negative quantity, duplicates) to validate Silver filtering
 - **Data quality validation** proving dirty records are filtered from Bronze to Silver
 - CHECK constraints on Silver for enforcement

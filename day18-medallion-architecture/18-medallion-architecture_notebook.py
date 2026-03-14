@@ -27,13 +27,13 @@
 # MAGIC Raw Files (S3)
 # MAGIC      |
 # MAGIC      v
-# MAGIC databricks_pro.medallion_bronze   (raw + metadata, append-only)
+# MAGIC databricks_pro.bronze   (raw + metadata, append-only)
 # MAGIC      |  Clean, Filter, Validate
 # MAGIC      v
-# MAGIC databricks_pro.medallion_silver   (deduplicated, enriched, quality-checked)
+# MAGIC databricks_pro.silver   (deduplicated, enriched, quality-checked)
 # MAGIC      |  Aggregate
 # MAGIC      v
-# MAGIC databricks_pro.medallion_gold     (business KPIs, star schema)
+# MAGIC databricks_pro.gold     (business KPIs, star schema)
 # MAGIC      |
 # MAGIC      v
 # MAGIC BI & Reporting / ML & AI / Streaming Analytics
@@ -52,9 +52,9 @@
 # MAGIC
 # MAGIC ```
 # MAGIC databricks_pro (catalog)
-# MAGIC   ├── medallion_bronze   -- raw, unfiltered data
-# MAGIC   ├── medallion_silver   -- cleansed, validated data
-# MAGIC   └── medallion_gold     -- business-ready aggregations
+# MAGIC   ├── bronze   -- raw, unfiltered data
+# MAGIC   ├── silver   -- cleansed, validated data
+# MAGIC   └── gold     -- business-ready aggregations
 # MAGIC ```
 
 # COMMAND ----------
@@ -66,9 +66,9 @@
 
 # MAGIC %sql
 # MAGIC -- Create separate schemas for each medallion layer
-# MAGIC CREATE SCHEMA IF NOT EXISTS medallion_bronze COMMENT 'Bronze layer: raw, unfiltered data with ingestion metadata';
-# MAGIC CREATE SCHEMA IF NOT EXISTS medallion_silver COMMENT 'Silver layer: cleansed, deduplicated, validated data';
-# MAGIC CREATE SCHEMA IF NOT EXISTS medallion_gold   COMMENT 'Gold layer: business-ready aggregations and KPIs';
+# MAGIC CREATE SCHEMA IF NOT EXISTS bronze COMMENT 'Bronze layer: raw, unfiltered data with ingestion metadata';
+# MAGIC CREATE SCHEMA IF NOT EXISTS silver COMMENT 'Silver layer: cleansed, deduplicated, validated data';
+# MAGIC CREATE SCHEMA IF NOT EXISTS gold   COMMENT 'Gold layer: business-ready aggregations and KPIs';
 
 # COMMAND ----------
 
@@ -83,9 +83,9 @@ raw_data_path = f"{base_path}/raw"
 print("Medallion Architecture Storage Layout")
 print("=" * 55)
 print(f"Raw data:    {raw_data_path}")
-print(f"Bronze:      {bronze_path}  -> medallion_bronze.*")
-print(f"Silver:      {silver_path}  -> medallion_silver.*")
-print(f"Gold:        {gold_path}    -> medallion_gold.*")
+print(f"Bronze:      {bronze_path}  -> bronze.*")
+print(f"Silver:      {silver_path}  -> silver.*")
+print(f"Gold:        {gold_path}    -> gold.*")
 
 # COMMAND ----------
 
@@ -258,7 +258,7 @@ df_dirty_preview.display()
 # MAGIC Bronze stores data **exactly as received** -- including all dirty records.
 # MAGIC No transformation, no filtering. Just raw data + ingestion metadata.
 # MAGIC
-# MAGIC **Schema**: `databricks_pro.medallion_bronze`
+# MAGIC **Schema**: `databricks_pro.bronze`
 
 # COMMAND ----------
 
@@ -278,7 +278,7 @@ df_bronze = (
 
 # Register in Bronze schema
 spark.sql(f"""
-    CREATE TABLE IF NOT EXISTS medallion_bronze.orders
+    CREATE TABLE IF NOT EXISTS bronze.orders
     USING DELTA
     LOCATION '{bronze_path}/orders'
     COMMENT 'Raw order events with ingestion metadata - includes dirty data'
@@ -289,7 +289,7 @@ print(f"Bronze layer: {df_bronze.count()} records (including dirty data)")
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC ALTER TABLE medallion_bronze.orders SET TBLPROPERTIES (
+# MAGIC ALTER TABLE bronze.orders SET TBLPROPERTIES (
 # MAGIC   'delta.autoOptimize.optimizeWrite' = 'true',
 # MAGIC   'delta.autoOptimize.autoCompact' = 'true'
 # MAGIC )
@@ -300,7 +300,7 @@ print(f"Bronze layer: {df_bronze.count()} records (including dirty data)")
 # MAGIC -- Bronze: ALL records including dirty data (nulls, zero qty, duplicates)
 # MAGIC SELECT order_id, customer_id, product_id, quantity, payment_method,
 # MAGIC        load_time, source_file
-# MAGIC FROM medallion_bronze.orders
+# MAGIC FROM bronze.orders
 # MAGIC ORDER BY order_id
 
 # COMMAND ----------
@@ -320,7 +320,7 @@ print(f"Bronze layer: {df_bronze.count()} records (including dirty data)")
 # MAGIC            WHEN quantity <= 0 THEN 'Invalid quantity: ' || quantity
 # MAGIC            ELSE 'Valid'
 # MAGIC        END as data_quality_issue
-# MAGIC FROM medallion_bronze.orders
+# MAGIC FROM bronze.orders
 # MAGIC WHERE customer_id IS NULL OR quantity <= 0
 # MAGIC ORDER BY order_id
 
@@ -337,7 +337,7 @@ print(f"Bronze layer: {df_bronze.count()} records (including dirty data)")
 # MAGIC 4. **Joining** with customer and product reference data
 # MAGIC 5. **Parsing** timestamps and calculating derived fields
 # MAGIC
-# MAGIC **Schema**: `databricks_pro.medallion_silver`
+# MAGIC **Schema**: `databricks_pro.silver`
 
 # COMMAND ----------
 
@@ -349,7 +349,7 @@ print(f"Bronze layer: {df_bronze.count()} records (including dirty data)")
 # Customers lookup
 df_customers.write.format("delta").mode("overwrite").save(f"{silver_path}/customers")
 spark.sql(f"""
-    CREATE TABLE IF NOT EXISTS medallion_silver.customers
+    CREATE TABLE IF NOT EXISTS silver.customers
     USING DELTA LOCATION '{silver_path}/customers'
     COMMENT 'Customer master reference data'
 """)
@@ -357,22 +357,22 @@ spark.sql(f"""
 # Products lookup
 df_products.write.format("delta").mode("overwrite").save(f"{silver_path}/products")
 spark.sql(f"""
-    CREATE TABLE IF NOT EXISTS medallion_silver.products
+    CREATE TABLE IF NOT EXISTS silver.products
     USING DELTA LOCATION '{silver_path}/products'
     COMMENT 'Product catalog reference data'
 """)
 
-print("Reference tables registered in medallion_silver schema")
+print("Reference tables registered in silver schema")
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC SELECT * FROM medallion_silver.customers
+# MAGIC SELECT * FROM silver.customers
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC SELECT * FROM medallion_silver.products
+# MAGIC SELECT * FROM silver.products
 
 # COMMAND ----------
 
@@ -430,7 +430,7 @@ print(f"Records filtered out: {df_bronze_orders.count() - df_silver.count()}")
 )
 
 spark.sql(f"""
-    CREATE TABLE IF NOT EXISTS medallion_silver.orders
+    CREATE TABLE IF NOT EXISTS silver.orders
     USING DELTA LOCATION '{silver_path}/orders'
     COMMENT 'Cleansed, deduplicated, and enriched order data'
 """)
@@ -438,12 +438,12 @@ spark.sql(f"""
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC ALTER TABLE medallion_silver.orders SET TBLPROPERTIES (
+# MAGIC ALTER TABLE silver.orders SET TBLPROPERTIES (
 # MAGIC   'delta.autoOptimize.optimizeWrite' = 'true',
 # MAGIC   'delta.autoOptimize.autoCompact' = 'true'
 # MAGIC );
-# MAGIC ALTER TABLE medallion_silver.orders ADD CONSTRAINT valid_quantity CHECK (quantity > 0);
-# MAGIC ALTER TABLE medallion_silver.orders ADD CONSTRAINT valid_amount CHECK (total_amount > 0);
+# MAGIC ALTER TABLE silver.orders ADD CONSTRAINT valid_quantity CHECK (quantity > 0);
+# MAGIC ALTER TABLE silver.orders ADD CONSTRAINT valid_amount CHECK (total_amount > 0);
 
 # COMMAND ----------
 
@@ -451,7 +451,7 @@ spark.sql(f"""
 # MAGIC -- Silver: clean, enriched records only
 # MAGIC SELECT order_id, order_date, first_name, last_name, city, tier,
 # MAGIC        product_name, quantity, price, total_amount, payment_method
-# MAGIC FROM medallion_silver.orders
+# MAGIC FROM silver.orders
 # MAGIC ORDER BY order_date DESC
 # MAGIC LIMIT 10
 
@@ -467,9 +467,9 @@ spark.sql(f"""
 
 # MAGIC %sql
 # MAGIC -- Record count comparison
-# MAGIC SELECT 'Bronze (raw)' as layer, COUNT(*) as records FROM medallion_bronze.orders
+# MAGIC SELECT 'Bronze (raw)' as layer, COUNT(*) as records FROM bronze.orders
 # MAGIC UNION ALL
-# MAGIC SELECT 'Silver (clean)' as layer, COUNT(*) as records FROM medallion_silver.orders
+# MAGIC SELECT 'Silver (clean)' as layer, COUNT(*) as records FROM silver.orders
 
 # COMMAND ----------
 
@@ -477,19 +477,19 @@ spark.sql(f"""
 # MAGIC -- Verify: dirty order IDs should NOT be in Silver
 # MAGIC SELECT 'ORD-9901 (null customer)' as dirty_record,
 # MAGIC        CASE WHEN COUNT(*) = 0 THEN 'FILTERED (correct)' ELSE 'PRESENT (bug!)' END as status
-# MAGIC FROM medallion_silver.orders WHERE order_id = 'ORD-9901'
+# MAGIC FROM silver.orders WHERE order_id = 'ORD-9901'
 # MAGIC UNION ALL
 # MAGIC SELECT 'ORD-9902 (null customer)',
 # MAGIC        CASE WHEN COUNT(*) = 0 THEN 'FILTERED (correct)' ELSE 'PRESENT (bug!)' END
-# MAGIC FROM medallion_silver.orders WHERE order_id = 'ORD-9902'
+# MAGIC FROM silver.orders WHERE order_id = 'ORD-9902'
 # MAGIC UNION ALL
 # MAGIC SELECT 'ORD-9903 (qty=0)',
 # MAGIC        CASE WHEN COUNT(*) = 0 THEN 'FILTERED (correct)' ELSE 'PRESENT (bug!)' END
-# MAGIC FROM medallion_silver.orders WHERE order_id = 'ORD-9903'
+# MAGIC FROM silver.orders WHERE order_id = 'ORD-9903'
 # MAGIC UNION ALL
 # MAGIC SELECT 'ORD-9904 (qty=-1)',
 # MAGIC        CASE WHEN COUNT(*) = 0 THEN 'FILTERED (correct)' ELSE 'PRESENT (bug!)' END
-# MAGIC FROM medallion_silver.orders WHERE order_id = 'ORD-9904'
+# MAGIC FROM silver.orders WHERE order_id = 'ORD-9904'
 
 # COMMAND ----------
 
@@ -502,14 +502,14 @@ spark.sql(f"""
 # MAGIC     SUM(CASE WHEN order_date IS NULL THEN 1 ELSE 0 END) as null_order_dates,
 # MAGIC     SUM(CASE WHEN total_amount IS NULL THEN 1 ELSE 0 END) as null_amounts,
 # MAGIC     SUM(CASE WHEN quantity <= 0 THEN 1 ELSE 0 END) as invalid_quantities
-# MAGIC FROM medallion_silver.orders
+# MAGIC FROM silver.orders
 
 # COMMAND ----------
 
 # MAGIC %sql
 # MAGIC -- Verify deduplication: no duplicate order_ids in Silver
 # MAGIC SELECT order_id, COUNT(*) as occurrences
-# MAGIC FROM medallion_silver.orders
+# MAGIC FROM silver.orders
 # MAGIC GROUP BY order_id
 # MAGIC HAVING COUNT(*) > 1
 
@@ -519,7 +519,7 @@ spark.sql(f"""
 # MAGIC ---
 # MAGIC ## Step 3: Gold Layer - Business-Level Aggregations
 # MAGIC
-# MAGIC **Schema**: `databricks_pro.medallion_gold`
+# MAGIC **Schema**: `databricks_pro.gold`
 # MAGIC
 # MAGIC Three Gold tables for different business use cases:
 # MAGIC 1. `daily_revenue` -- regional sales dashboards (BI & Reporting)
@@ -556,12 +556,12 @@ df_daily_revenue = (
 )
 
 spark.sql(f"""
-    CREATE TABLE IF NOT EXISTS medallion_gold.daily_revenue
+    CREATE TABLE IF NOT EXISTS gold.daily_revenue
     USING DELTA LOCATION '{gold_path}/daily_revenue'
     COMMENT 'Daily revenue by city for regional dashboards'
 """)
 
-print("Gold: medallion_gold.daily_revenue created")
+print("Gold: gold.daily_revenue created")
 df_daily_revenue.display()
 
 # COMMAND ----------
@@ -593,12 +593,12 @@ df_customer_summary = (
 )
 
 spark.sql(f"""
-    CREATE TABLE IF NOT EXISTS medallion_gold.customer_summary
+    CREATE TABLE IF NOT EXISTS gold.customer_summary
     USING DELTA LOCATION '{gold_path}/customer_summary'
     COMMENT 'Customer lifetime value and purchase behavior'
 """)
 
-print("Gold: medallion_gold.customer_summary created")
+print("Gold: gold.customer_summary created")
 df_customer_summary.display()
 
 # COMMAND ----------
@@ -628,12 +628,12 @@ df_product_performance = (
 )
 
 spark.sql(f"""
-    CREATE TABLE IF NOT EXISTS medallion_gold.product_performance
+    CREATE TABLE IF NOT EXISTS gold.product_performance
     USING DELTA LOCATION '{gold_path}/product_performance'
     COMMENT 'Product sales performance and merchandising metrics'
 """)
 
-print("Gold: medallion_gold.product_performance created")
+print("Gold: gold.product_performance created")
 df_product_performance.display()
 
 # COMMAND ----------
@@ -794,7 +794,7 @@ print("All Gold tables refreshed")
 # MAGIC SELECT first_name, last_name, city, tier,
 # MAGIC        total_orders, lifetime_spend, avg_order_value,
 # MAGIC        unique_products_bought, first_order_date, last_order_date
-# MAGIC FROM medallion_gold.customer_summary
+# MAGIC FROM gold.customer_summary
 # MAGIC ORDER BY lifetime_spend DESC
 
 # COMMAND ----------
@@ -802,7 +802,7 @@ print("All Gold tables refreshed")
 # MAGIC %sql
 # MAGIC SELECT order_day, city, total_revenue, total_orders, total_items_sold,
 # MAGIC        unique_customers, ROUND(avg_order_value, 2) as avg_order_value
-# MAGIC FROM medallion_gold.daily_revenue
+# MAGIC FROM gold.daily_revenue
 # MAGIC ORDER BY order_day, total_revenue DESC
 
 # COMMAND ----------
@@ -810,7 +810,7 @@ print("All Gold tables refreshed")
 # MAGIC %sql
 # MAGIC SELECT product_name, times_ordered, total_units_sold,
 # MAGIC        ROUND(total_revenue, 2) as total_revenue, unique_buyers, avg_units_per_order
-# MAGIC FROM medallion_gold.product_performance
+# MAGIC FROM gold.product_performance
 # MAGIC ORDER BY total_revenue DESC
 
 # COMMAND ----------
@@ -823,32 +823,32 @@ print("All Gold tables refreshed")
 
 # MAGIC %sql
 # MAGIC -- Bronze history: initial write + incremental append
-# MAGIC DESCRIBE HISTORY medallion_bronze.orders
+# MAGIC DESCRIBE HISTORY bronze.orders
 
 # COMMAND ----------
 
 # MAGIC %sql
 # MAGIC -- Time travel: Bronze before batch 2
 # MAGIC SELECT COUNT(*) as records, 'Before Batch 2' as label
-# MAGIC FROM medallion_bronze.orders VERSION AS OF 0
+# MAGIC FROM bronze.orders VERSION AS OF 0
 # MAGIC UNION ALL
-# MAGIC SELECT COUNT(*), 'After Batch 2' FROM medallion_bronze.orders
+# MAGIC SELECT COUNT(*), 'After Batch 2' FROM bronze.orders
 
 # COMMAND ----------
 
 # MAGIC %sql
 # MAGIC -- Silver history: OVERWRITE + MERGE
-# MAGIC DESCRIBE HISTORY medallion_silver.orders
+# MAGIC DESCRIBE HISTORY silver.orders
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC OPTIMIZE medallion_silver.orders ZORDER BY (customer_id, order_date)
+# MAGIC OPTIMIZE silver.orders ZORDER BY (customer_id, order_date)
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC OPTIMIZE medallion_gold.daily_revenue ZORDER BY (order_day, city)
+# MAGIC OPTIMIZE gold.daily_revenue ZORDER BY (order_day, city)
 
 # COMMAND ----------
 
@@ -858,13 +858,13 @@ print("All Gold tables refreshed")
 # MAGIC
 # MAGIC | Schema | Table | Purpose | Write Mode |
 # MAGIC |--------|-------|---------|------------|
-# MAGIC | `medallion_bronze` | `orders` | Raw audit trail (includes dirty data) | APPEND |
-# MAGIC | `medallion_silver` | `customers` | Customer master reference | OVERWRITE |
-# MAGIC | `medallion_silver` | `products` | Product catalog reference | OVERWRITE |
-# MAGIC | `medallion_silver` | `orders` | Cleansed, enriched orders | MERGE (upsert) |
-# MAGIC | `medallion_gold` | `daily_revenue` | Regional dashboards | OVERWRITE |
-# MAGIC | `medallion_gold` | `customer_summary` | Customer LTV analytics | OVERWRITE |
-# MAGIC | `medallion_gold` | `product_performance` | Merchandising insights | OVERWRITE |
+# MAGIC | `bronze` | `orders` | Raw audit trail (includes dirty data) | APPEND |
+# MAGIC | `silver` | `customers` | Customer master reference | OVERWRITE |
+# MAGIC | `silver` | `products` | Product catalog reference | OVERWRITE |
+# MAGIC | `silver` | `orders` | Cleansed, enriched orders | MERGE (upsert) |
+# MAGIC | `gold` | `daily_revenue` | Regional dashboards | OVERWRITE |
+# MAGIC | `gold` | `customer_summary` | Customer LTV analytics | OVERWRITE |
+# MAGIC | `gold` | `product_performance` | Merchandising insights | OVERWRITE |
 # MAGIC
 # MAGIC ### Data Quality Flow
 # MAGIC
@@ -878,7 +878,7 @@ print("All Gold tables refreshed")
 # MAGIC
 # MAGIC ### Production Best Practices
 # MAGIC
-# MAGIC 1. **Separate schemas** per layer: `medallion_bronze`, `medallion_silver`, `medallion_gold`
+# MAGIC 1. **Separate schemas** per layer: `bronze`, `silver`, `gold`
 # MAGIC 2. **Dirty data preserved** in Bronze for audit trail
 # MAGIC 3. **CHECK constraints** on Silver: `quantity > 0`, `total_amount > 0`
 # MAGIC 4. **MERGE** for idempotent Silver incremental updates
@@ -895,9 +895,9 @@ print("All Gold tables refreshed")
 
 # Drop all tables across all schemas
 for schema, tables in [
-    ("medallion_bronze", ["orders"]),
-    ("medallion_silver", ["orders", "customers", "products"]),
-    ("medallion_gold", ["daily_revenue", "customer_summary", "product_performance"]),
+    ("bronze", ["orders"]),
+    ("silver", ["orders", "customers", "products"]),
+    ("gold", ["daily_revenue", "customer_summary", "product_performance"]),
 ]:
     for table in tables:
         spark.sql(f"DROP TABLE IF EXISTS {schema}.{table}")
@@ -911,9 +911,9 @@ print(f"Removed: {base_path}")
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC DROP SCHEMA IF EXISTS medallion_bronze CASCADE;
-# MAGIC DROP SCHEMA IF EXISTS medallion_silver CASCADE;
-# MAGIC DROP SCHEMA IF EXISTS medallion_gold CASCADE;
+# MAGIC DROP SCHEMA IF EXISTS bronze CASCADE;
+# MAGIC DROP SCHEMA IF EXISTS silver CASCADE;
+# MAGIC DROP SCHEMA IF EXISTS gold CASCADE;
 
 # COMMAND ----------
 
