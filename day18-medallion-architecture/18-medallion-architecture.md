@@ -282,6 +282,62 @@ This ensures that when new data arrives, only the new records are processed -- n
 
 ---
 
+## Production Best Practices
+
+### Unity Catalog Governance
+
+Organize Medallion layers under Unity Catalog for centralized governance:
+```sql
+USE CATALOG my_catalog;
+CREATE SCHEMA bronze COMMENT 'Raw data layer';
+CREATE SCHEMA silver COMMENT 'Cleansed and conformed data';
+CREATE SCHEMA gold   COMMENT 'Business-ready aggregations';
+```
+
+### Delta Table Properties
+
+Enable auto-optimization for all tables:
+```sql
+ALTER TABLE orders_bronze SET TBLPROPERTIES (
+  'delta.autoOptimize.optimizeWrite' = 'true',
+  'delta.autoOptimize.autoCompact' = 'true'
+);
+```
+
+### Data Quality Constraints
+
+Add CHECK constraints on Silver tables to enforce data quality:
+```sql
+ALTER TABLE orders_silver ADD CONSTRAINT valid_quantity CHECK (quantity > 0);
+ALTER TABLE orders_silver ADD CONSTRAINT valid_amount CHECK (total_amount > 0);
+```
+
+### MERGE for Idempotent Silver Updates
+
+Use MERGE INTO (upsert) instead of overwrite for incremental Silver updates:
+```python
+from delta.tables import DeltaTable
+
+silver_table = DeltaTable.forPath(spark, "s3://bucket/silver/orders")
+
+(silver_table.alias("target")
+    .merge(df_new_data.alias("source"), "target.order_id = source.order_id")
+    .whenMatchedUpdateAll()
+    .whenNotMatchedInsertAll()
+    .execute()
+)
+```
+
+### OPTIMIZE and ZORDER
+
+Periodically compact small files and co-locate data for faster queries:
+```sql
+OPTIMIZE orders_silver ZORDER BY (customer_id, order_date);
+OPTIMIZE gold_daily_revenue ZORDER BY (order_day, city);
+```
+
+---
+
 ## Advanced: Four-Layer Architecture (Platinum Layer)
 
 Some enterprise teams extend the pattern to four layers by adding a **Platinum Layer** between Silver and Gold:
@@ -338,11 +394,15 @@ The **Databricks Certified Data Engineer Associate** exam tests Medallion Archit
 
 See the accompanying notebook: [`18-medallion-architecture_notebook.py`](18-medallion-architecture_notebook.py)
 
-The lab builds a complete Bronze -> Silver -> Gold pipeline for a retail bookstore scenario using:
-- Auto Loader for Bronze ingestion from S3
-- Structured Streaming for Silver transformations
-- Batch aggregation with `trigger(availableNow=True)` for Gold tables
-- Delta Lake on AWS S3 for all layers
+The lab builds a production-grade Bronze -> Silver -> Gold pipeline for a retail scenario using:
+- Unity Catalog (`databricks_pro.medallion_lab`) for governance
+- Delta table properties: auto-optimize, auto-compact
+- CHECK constraints on Silver for data quality enforcement
+- MERGE (upsert) for idempotent Silver incremental updates
+- OPTIMIZE + ZORDER for query performance
+- Auto Loader reference patterns for Bronze ingestion from S3
+- Three Gold tables: daily revenue, customer LTV, product performance
+- Delta Lake time travel and history across all layers
 
 ## Next Steps
 

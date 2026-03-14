@@ -37,7 +37,7 @@
 See the accompanying guide and notebook:
 
 - **Guide**: [`18-medallion-architecture.md`](18-medallion-architecture.md) -- comprehensive theory, architecture patterns, and cloud-specific notes
-- **Notebook**: [`18-medallion-architecture_notebook.py`](18-medallion-architecture_notebook.py) -- runnable Databricks lab building a full Bronze -> Silver -> Gold pipeline on AWS S3
+- **Notebook**: [`18-medallion-architecture_notebook.py`](18-medallion-architecture_notebook.py) -- production-grade Databricks lab with Unity Catalog, MERGE upserts, CHECK constraints, OPTIMIZE/ZORDER, and incremental ETL on AWS S3
 
 ## Certification Tip
 
