@@ -329,9 +329,18 @@ df_advanced.printSchema()
 # MAGIC
 # MAGIC **Do NOT combine** with `cloudFiles.useNotifications = true`.
 # MAGIC
-# MAGIC **Prerequisites**:
+# MAGIC ### Prerequisites (ALL must be completed before running Track B)
+# MAGIC
+# MAGIC 1. **Storage credential** must exist in Unity Catalog
+# MAGIC 2. **External location** must be created for the S3 prefix used by this lab
+# MAGIC 3. **File events must be enabled** on the external location
+# MAGIC
 # MAGIC ```sql
-# MAGIC -- 1. Create storage credential (Admin)
+# MAGIC -- Check if your external location exists
+# MAGIC SHOW EXTERNAL LOCATIONS;
+# MAGIC
+# MAGIC -- If not, create one (requires Admin):
+# MAGIC -- 1. Create storage credential
 # MAGIC CREATE STORAGE CREDENTIAL my_s3_credential
 # MAGIC WITH (AWS_IAM_ROLE = 'arn:aws:iam::ACCOUNT_ID:role/databricks-runtime-role');
 # MAGIC
@@ -340,14 +349,26 @@ df_advanced.printSchema()
 # MAGIC URL 's3://databricks-zero-to-pro/autoloader_lab/'
 # MAGIC WITH (STORAGE CREDENTIAL my_s3_credential);
 # MAGIC
-# MAGIC -- 3. Enable file events
+# MAGIC -- 3. Enable file events (CRITICAL -- without this, you get SNS topic errors)
 # MAGIC ALTER EXTERNAL LOCATION autoloader_lab_location ENABLE FILE EVENTS;
 # MAGIC ```
+# MAGIC
+# MAGIC The IAM role attached to the storage credential needs these SNS/SQS permissions:
+# MAGIC - `sns:CreateTopic`, `sns:GetTopicAttributes`, `sns:Subscribe`, `sns:Publish`
+# MAGIC - `sqs:CreateQueue`, `sqs:GetQueueAttributes`, `sqs:ReceiveMessage`, `sqs:DeleteMessage`
+# MAGIC
+# MAGIC **If you get errors**, skip to Track A (directory listing) which always works without any setup.
+# MAGIC
+# MAGIC **Common error**: `Failed to provision file events resources during sns.getTopicAttributes`
+# MAGIC means file events are not enabled or the IAM role lacks SNS permissions.
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ### B1. Managed File Events Ingestion
+# MAGIC
+# MAGIC **If this cell fails**, your external location does not have file events enabled.
+# MAGIC Skip to Track A (directory listing) which requires no infrastructure setup.
 
 # COMMAND ----------
 
@@ -674,9 +695,12 @@ print("Bronze -> Silver pipeline completed")
 # MAGIC |-------|-------|-----|
 # MAGIC | `PermanentRedirect` | Bucket region mismatch | Set `cloudFiles.region` to match S3 bucket |
 # MAGIC | `GetBucketNotification AccessDenied` | Missing IAM permission | Add `s3:GetBucketNotification` to role + bucket policy |
-# MAGIC | "no matching external location" | S3 path not in UC external location | Create external location, enable file events |
-# MAGIC | `sns.subscribe` failure | SNS/SQS permission issue | Check SNS/SQS IAM permissions in CloudTrail |
+# MAGIC | "no matching external location" | S3 path not in UC external location | Create external location for the S3 prefix |
+# MAGIC | `sns.getTopicAttributes` / Topic does not exist | File events not enabled or SNS permissions missing | Run `ALTER EXTERNAL LOCATION ... ENABLE FILE EVENTS;` and ensure IAM role has `sns:CreateTopic`, `sns:GetTopicAttributes` |
+# MAGIC | `sns.subscribe` failure | SNS/SQS subscription wiring failed | Check SNS and SQS permissions in CloudTrail |
 # MAGIC | CloudTrail `anonymous` | S3 didn't recognize principal | Verify Databricks runtime role ARN in bucket policy |
+# MAGIC
+# MAGIC **If managed file events fails, use directory listing** (`cloudFiles.useNotifications = false`) -- it always works.
 
 # COMMAND ----------
 
