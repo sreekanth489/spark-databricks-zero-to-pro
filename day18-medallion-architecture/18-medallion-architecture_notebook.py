@@ -19,9 +19,9 @@
 # MAGIC
 # MAGIC **Architecture**:
 # MAGIC
-# MAGIC ![Medallion Architecture](images/medallion-architecture.png)
+# MAGIC <img src="https://raw.githubusercontent.com/sreekanth489/spark-databricks-zero-to-pro/main/day18-medallion-architecture/images/medallion-architecture.png" width="800">
 # MAGIC
-# MAGIC ![Data Quality Levels](images/medallion-data-quality.png)
+# MAGIC <img src="https://raw.githubusercontent.com/sreekanth489/spark-databricks-zero-to-pro/main/day18-medallion-architecture/images/medallion-data-quality.png" width="800">
 # MAGIC
 # MAGIC ```
 # MAGIC Raw Files (S3)
