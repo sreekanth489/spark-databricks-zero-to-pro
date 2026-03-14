@@ -1,15 +1,15 @@
-# Structured Streaming & Auto Loader
+# Structured Streaming
 > Module: Data Engineering Pipelines | Day 19 | Level: Intermediate | Time: 90 min
 
 ## Learning Objectives
 
 After completing this session, you will be able to:
-- Build streaming pipelines with Spark Structured Streaming
-- Use Auto Loader to incrementally ingest files from AWS S3
-- Choose between the three Auto Loader modes: directory listing, managed file events, and classic notifications
-- Configure schema inference, evolution, and rescue columns
-- Select the right trigger strategy for your use case
-- Troubleshoot common Auto Loader errors on AWS
+- Explain Structured Streaming as a stream processing engine
+- Distinguish between Structured Streaming (engine) and Auto Loader (source)
+- Build streaming pipelines from Delta tables and file sources
+- Perform stream-static joins for data enrichment
+- Apply watermarking for late data handling
+- Choose the right trigger and output mode for your use case
 
 ---
 
@@ -17,7 +17,7 @@ After completing this session, you will be able to:
 
 ### What is Structured Streaming?
 
-**Structured Streaming** is Spark's stream processing engine built on the Spark SQL engine. It treats a live data stream as an unbounded table that is continuously appended with new rows. You write streaming queries using the same DataFrame/SQL API as batch queries.
+**Structured Streaming** is Spark's stream processing engine. It treats a live data stream as an unbounded table that is continuously appended with new rows. You write streaming queries using the same DataFrame/SQL API as batch queries.
 
 ```
                     Unbounded Input Table
@@ -42,427 +42,278 @@ Output (Result) ->  | A | B | C | D | E | ...
 
 | Aspect | Batch | Streaming |
 |--------|-------|-----------|
-| API | `spark.read` | `spark.readStream` |
-| Output | `df.write` | `df.writeStream` |
+| Read API | `spark.read` | `spark.readStream` |
+| Write API | `df.write` | `df.writeStream` |
 | Execution | Runs once, processes all data | Runs continuously or triggered |
 | New data | Must re-read everything | Automatically picks up new data |
-| State | Stateless (each run is independent) | Stateful (checkpoints track progress) |
+| State | Stateless (each run independent) | Stateful (checkpoints track progress) |
 | Use case | Historical analysis, backfills | Real-time ingestion, live dashboards |
 
 ---
 
-## Auto Loader (`cloudFiles`)
+## Structured Streaming vs Auto Loader
 
-### What is Auto Loader?
+This is a critical distinction that many people confuse.
 
-**Auto Loader** is a Databricks-optimized streaming source for incrementally ingesting new data files from cloud storage (S3, ADLS, GCS). It is the recommended way to ingest files into the Bronze layer of a Medallion Architecture.
+**Structured Streaming is the streaming ENGINE.**
+**Auto Loader is a specialized file ingestion SOURCE built on top of Structured Streaming.**
 
 ```
-   Files land in S3
-         |
-         v
-   Auto Loader detects new files
-   (via directory listing, managed events, or classic notifications)
-         |
-         v
-   Reads & processes new files only
-         |
-         v
-   Writes to Delta table
-   (with checkpoint for exactly-once)
+S3 / ADLS / GCS
+      |
+      v
+Auto Loader (cloudFiles)     <-- SOURCE (Day 20)
+      |
+      v
+Spark Structured Streaming   <-- ENGINE (this session)
+      |
+      v
+Transformations
+      |
+      v
+Delta Lake
 ```
 
-**Why Auto Loader over `spark.readStream.format("parquet")`?**
+Every Auto Loader pipeline IS a Structured Streaming query internally. When you run `spark.readStream.format("cloudFiles")`, Spark internally uses its micro-batch execution engine to process the data.
 
-| Feature | Auto Loader (`cloudFiles`) | Native File Source |
-|---------|---------------------------|-------------------|
-| New file discovery | Optimized (notifications or incremental listing) | Lists entire directory every trigger |
-| Schema inference | Built-in with `schemaLocation` | Manual schema required |
-| Schema evolution | Automatic with `schemaEvolutionMode` | Not supported |
-| Rescue column | Built-in `_rescued_data` | Not available |
-| Scalability | Handles millions of files | Degrades with file count |
-| File tracking | Tracks processed files in checkpoint | Re-lists all files |
-| Cost (S3 API calls) | Lower (notifications) or optimized (listing) | Higher (full LIST per trigger) |
+| Aspect | Structured Streaming | Auto Loader |
+|--------|---------------------|-------------|
+| What it is | Stream processing engine | File ingestion source |
+| API | `spark.readStream` / `spark.writeStream` | `spark.readStream.format("cloudFiles")` |
+| Handles | Micro-batch execution, checkpointing, fault tolerance, state management | File discovery, schema inference, schema evolution, incremental tracking |
+| Streaming engine? | Yes | No -- uses Structured Streaming |
+| File discovery | Basic (lists entire directory) | Highly optimized (notifications, incremental listing) |
+| Schema evolution | Manual | Automatic |
+| Handles millions of files | Not well | Yes |
+
+**Standard file source** (Structured Streaming only):
+```python
+df = spark.readStream.format("parquet").schema(my_schema).load("/data/input")
+```
+
+**Auto Loader** (Structured Streaming + optimized file discovery):
+```python
+df = spark.readStream.format("cloudFiles").option("cloudFiles.format", "parquet").load("s3://bucket/data")
+```
+
+Both use the same streaming engine underneath. Auto Loader just provides a better file ingestion mechanism. See **Day 20** for full Auto Loader coverage.
 
 ---
 
-## Auto Loader: Three Modes on AWS
+## Streaming Sources
 
-Auto Loader supports three file discovery mechanisms on AWS. The choice depends on your Databricks edition, infrastructure, and scale.
+Structured Streaming can read from multiple source types:
 
-### Mode 1: Directory Listing (Recommended Starter Path)
+| Source | Format | Use Case |
+|--------|--------|----------|
+| **Delta Lake** | `delta` | Stream from Delta tables (recommended) |
+| **File source** | `parquet`, `json`, `csv` | Stream from raw files (basic) |
+| **Auto Loader** | `cloudFiles` | Optimized file ingestion (Day 20) |
+| **Kafka** | `kafka` | Event streams, message queues |
+| **Rate source** | `rate` | Testing and development |
 
-**The simplest setup and most reliable for learning and development.**
+### Streaming from Delta Tables
 
-Auto Loader scans the S3 directory for new files, comparing against previously processed files tracked in the checkpoint.
+The most common and recommended source for downstream streaming:
 
-**Configuration**:
 ```python
-spark.readStream
-    .format("cloudFiles")
-    .option("cloudFiles.format", "parquet")
-    .option("cloudFiles.useNotifications", "false")          # explicit: directory listing
-    .option("cloudFiles.includeExistingFiles", "true")       # process existing files on first run
-    .option("cloudFiles.schemaLocation", "s3://bucket/schemas/orders")
-    .load("s3://bucket/raw/orders/")
-    .withColumn("load_time", current_timestamp())
-    .withColumn("source_file", col("_metadata.file_path"))   # Unity Catalog safe
-    .withColumn("source_file_name", col("_metadata.file_name"))
+df = spark.readStream.format("delta").table("my_catalog.my_schema.orders")
 ```
 
-**How it discovers files**:
-1. On first run: performs a full LIST of the S3 prefix
-2. On subsequent runs: uses incremental listing with lexicographic ordering
-3. Tracks processed files in the checkpoint directory (RocksDB state store)
-4. Only reads files that haven't been processed before
+Delta Lake as a streaming source provides:
+- ACID guarantees
+- Automatic tracking of new data via the transaction log
+- No need to list directories
+- Schema enforcement
 
-**When to use**:
-- Learning and development
-- Moderate file volumes (up to tens of thousands per directory)
-- When you want zero infrastructure setup
-- Scheduled batch-style ingestion with `trigger(availableNow=True)`
-- Works on both Free and Premium editions
+### Streaming from Files
 
-**Advantages**: Zero setup, most reliable, works everywhere
-**Limitations**: Higher S3 LIST API costs, not suitable for sub-second latency
+Basic file streaming (without Auto Loader):
 
-**Advanced options**:
 ```python
-.option("cloudFiles.maxFilesPerTrigger", "1000")       # limit files per micro-batch
-.option("cloudFiles.maxBytesPerTrigger", "10g")        # limit bytes per micro-batch
-.option("pathGlobFilter", "*.json")                    # file extension filter
-.option("recursiveFileLookup", "true")                 # scan subdirectories
+df = (spark.readStream
+    .format("parquet")
+    .schema(my_schema)          # schema required for file sources
+    .load("s3://bucket/raw/")
+)
 ```
+
+**Limitation**: Re-lists the entire directory on every trigger. Does not scale well for millions of files. For production file ingestion, use Auto Loader (Day 20).
 
 ---
 
-### Mode 2: Managed File Events (Recommended Production Path)
+## Streaming Sinks
 
-**The modern, recommended direction on Databricks AWS Premium.**
-
-Databricks manages the notification infrastructure (SNS/SQS) behind the scenes through Unity Catalog external locations.
-
-**Configuration**:
-```python
-spark.readStream
-    .format("cloudFiles")
-    .option("cloudFiles.format", "json")
-    .option("cloudFiles.useManagedFileEvents", "true")       # managed file events
-    .option("cloudFiles.inferColumnTypes", "true")
-    .option("cloudFiles.schemaLocation", "s3://bucket/schemas/events")
-    .option("cloudFiles.schemaEvolutionMode", "addNewColumns")
-    .load("s3://bucket/raw/events/")
-    .withColumn("load_time", current_timestamp())
-    .withColumn("source_file", col("_metadata.file_path"))
-    .withColumn("source_file_name", col("_metadata.file_name"))
-```
-
-**Do NOT combine** with `cloudFiles.useNotifications = true` -- they are mutually exclusive.
-
-**Prerequisites** (one-time setup):
-
-```sql
--- 1. Create storage credential (Admin)
-CREATE STORAGE CREDENTIAL my_s3_credential
-WITH (AWS_IAM_ROLE = 'arn:aws:iam::ACCOUNT_ID:role/databricks-runtime-role');
-
--- 2. Create external location for the S3 prefix
-CREATE EXTERNAL LOCATION streaming_lab_location
-URL 's3://databricks-zero-to-pro/streaming_lab/'
-WITH (STORAGE CREDENTIAL my_s3_credential);
-
--- 3. Enable file events on the external location
-ALTER EXTERNAL LOCATION streaming_lab_location
-ENABLE FILE EVENTS;
-```
-
-**When to use**:
-- Production workloads on Databricks Premium
-- When you have Unity Catalog external locations configured
-- High-volume ingestion requiring near-real-time detection
-- When you want Databricks to manage notification lifecycle
-
-**Advantages**: Modern pattern, cleaner than classic, Databricks manages lifecycle
-**Limitations**: Requires Premium edition, Unity Catalog, external location with file events
-
----
-
-### Mode 3: Classic File Notifications (Legacy / Appendix)
-
-**The older approach where Auto Loader auto-manages S3 bucket notifications plus SNS/SQS per stream.** This has more moving parts and more AWS-side failure modes than the other two modes.
-
-**Configuration**:
-```python
-spark.readStream
-    .format("cloudFiles")
-    .option("cloudFiles.format", "parquet")
-    .option("cloudFiles.useNotifications", "true")           # classic notifications
-    .option("cloudFiles.region", "us-east-1")                # MUST match S3 bucket region
-    .option("cloudFiles.schemaLocation", "s3://bucket/schemas/orders")
-    .load("s3://bucket/raw/orders/")
-```
-
-**What Databricks does behind the scenes**:
-1. Creates an SNS topic for S3 event notifications
-2. Creates an SQS queue subscribed to the SNS topic
-3. Configures S3 bucket event notifications to publish to SNS
-4. Polls the SQS queue for new file events
-
-**Pre-configured SQS** (production variant):
-```python
-.option("cloudFiles.queueUrl",
-        "https://sqs.us-east-1.amazonaws.com/123456789012/my-autoloader-queue")
-```
-
-**When to use**:
-- When you cannot use managed file events (no Unity Catalog external location)
-- When you need fine-grained control over SNS/SQS resources
-- On non-Premium workspaces without Unity Catalog
-
-**Advantages**: Near-real-time detection, works without Unity Catalog
-**Limitations**: Requires broad IAM permissions, per-stream SNS/SQS resources, cleanup needed
-
----
-
-## Comparison: Three Auto Loader Modes
-
-| Feature | Directory Listing | Managed File Events | Classic Notifications |
-|---------|-------------------|--------------------|-----------------------|
-| **Option** | `useNotifications=false` | `useManagedFileEvents=true` | `useNotifications=true` |
-| **Setup complexity** | None | External location + file events | IAM for SNS/SQS + bucket policy |
-| **Infrastructure** | None | Databricks-managed | Per-stream SNS/SQS |
-| **File detection** | Polls S3 directory | Near-real-time events | Near-real-time events |
-| **Scale** | Moderate (< 100K files) | Millions+ | Millions+ |
-| **Databricks edition** | Free + Premium | Premium only | Free + Premium |
-| **Unity Catalog** | Optional | Required | Optional |
-| **Cleanup** | Nothing | Databricks manages | Must teardown SNS/SQS |
-| **Recommendation** | Starter / Dev | Production | Legacy / Appendix |
-
----
-
-## IAM and Bucket Policy for AWS
-
-### IAM Policy for the Databricks Runtime Role
-
-Attach this to the IAM role that your Databricks workspace actually uses (e.g., `databricks-s3-ingest-XXXXX-db_s3_iam`):
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "AllowBucketNotificationOps",
-      "Effect": "Allow",
-      "Action": [
-        "s3:GetBucketNotification",
-        "s3:PutBucketNotification",
-        "s3:GetBucketLocation",
-        "s3:ListBucket"
-      ],
-      "Resource": "arn:aws:s3:::databricks-zero-to-pro"
-    },
-    {
-      "Sid": "AllowObjectAccess",
-      "Effect": "Allow",
-      "Action": [
-        "s3:GetObject",
-        "s3:PutObject",
-        "s3:DeleteObject"
-      ],
-      "Resource": "arn:aws:s3:::databricks-zero-to-pro/*"
-    },
-    {
-      "Sid": "AllowSNSOps",
-      "Effect": "Allow",
-      "Action": [
-        "sns:CreateTopic", "sns:DeleteTopic", "sns:GetTopicAttributes",
-        "sns:SetTopicAttributes", "sns:ListSubscriptionsByTopic",
-        "sns:Subscribe", "sns:Unsubscribe", "sns:Publish"
-      ],
-      "Resource": "*"
-    },
-    {
-      "Sid": "AllowSQSOps",
-      "Effect": "Allow",
-      "Action": [
-        "sqs:CreateQueue", "sqs:DeleteQueue", "sqs:GetQueueAttributes",
-        "sqs:SetQueueAttributes", "sqs:ListQueueTags", "sqs:TagQueue",
-        "sqs:UntagQueue", "sqs:ReceiveMessage", "sqs:DeleteMessage",
-        "sqs:SendMessage"
-      ],
-      "Resource": "*"
-    }
-  ]
-}
-```
-
-**Note**: This is intentionally broad for labs. In production, scope SNS/SQS resources more tightly.
-
-### S3 Bucket Policy
-
-Put this on the S3 bucket itself, granting the Databricks role bucket-level notification access:
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Sid": "AllowDatabricksRoleBucketNotificationAccess",
-      "Effect": "Allow",
-      "Principal": {
-        "AWS": "arn:aws:iam::ACCOUNT_ID:role/databricks-s3-ingest-XXXXX-db_s3_iam"
-      },
-      "Action": [
-        "s3:GetBucketNotification",
-        "s3:PutBucketNotification",
-        "s3:GetBucketLocation",
-        "s3:ListBucket"
-      ],
-      "Resource": "arn:aws:s3:::databricks-zero-to-pro"
-    }
-  ]
-}
-```
-
----
-
-## Metadata Columns: `_metadata` vs `input_file_name()`
-
-In Unity Catalog, use `_metadata.file_path` and `_metadata.file_name` instead of `input_file_name()`:
-
-```python
-# Unity Catalog safe (recommended)
-.withColumn("source_file", col("_metadata.file_path"))
-.withColumn("source_file_name", col("_metadata.file_name"))
-
-# Older approach (may not work with Unity Catalog)
-.withColumn("source_file", input_file_name())
-```
-
-The `_metadata` column is automatically available on all file-based sources and provides:
-- `_metadata.file_path`: full path to the source file
-- `_metadata.file_name`: file name only
-- `_metadata.file_size`: file size in bytes
-- `_metadata.file_modification_time`: last modified timestamp
-
----
-
-## Schema Handling
-
-### Schema Inference
-
-Auto Loader infers the schema from source files and persists it to `schemaLocation`:
-
-```python
-.option("cloudFiles.inferColumnTypes", "true")      # infer types (not just strings)
-.option("cloudFiles.schemaLocation", "s3://bucket/schemas/my_stream")
-```
-
-The schema is only inferred once (from the first batch of files), making restarts fast.
-
-### Schema Evolution
-
-When source data adds new columns:
-
-| Mode | Behavior |
-|------|----------|
-| `addNewColumns` | New columns are automatically added to the schema |
-| `rescue` | New columns go into `_rescued_data` (default) |
-| `failOnNewColumns` | Stream fails if new columns are detected |
-| `none` | New columns are silently ignored |
-
-### Rescue Column
-
-Data that doesn't match the expected schema is captured in `_rescued_data`:
-```python
-.option("cloudFiles.schemaEvolutionMode", "rescue")  # default
-# _rescued_data column is automatically added
-```
+| Sink | Format | Use Case |
+|------|--------|----------|
+| **Delta Lake** | `delta` | Production tables (recommended) |
+| **Parquet** | `parquet` | Raw file output |
+| **Kafka** | `kafka` | Event publishing |
+| **Console** | `console` | Development/debugging |
+| **Memory** | `memory` | Testing (creates temp table) |
 
 ---
 
 ## Trigger Strategies
 
-| Trigger | Behavior | Use Case |
-|---------|----------|----------|
-| `trigger(availableNow=True)` | Process all available data then stop | Scheduled batch jobs |
-| `trigger(processingTime="30 seconds")` | Micro-batch every 30 seconds | Near-real-time dashboards |
-| `trigger(processingTime="0 seconds")` | Process as fast as possible | Low-latency requirements |
-| `trigger(once=True)` | Process one micro-batch then stop | **Deprecated**, use `availableNow` |
+Triggers control when Structured Streaming processes data.
 
-**Production recommendation**: Use `trigger(availableNow=True)` for scheduled Workflows.
+| Trigger | Behavior | Stops? | Use Case |
+|---------|----------|--------|----------|
+| `trigger(availableNow=True)` | Process all available data in multiple micro-batches | Yes | Scheduled Workflows |
+| `trigger(processingTime="30 seconds")` | One micro-batch every 30 seconds | No | Near-real-time |
+| `trigger(processingTime="0 seconds")` | ASAP, back-to-back | No | Lowest latency |
+| `trigger(once=True)` | Single micro-batch | Yes | **Deprecated** |
+| No trigger (default) | ASAP | No | Development |
+
+**Production recommendation**: Use `trigger(availableNow=True)` for scheduled Databricks Workflows. It processes ALL pending data across multiple micro-batches then stops -- cost-efficient and reliable.
+
+**Key difference**: `once=True` processes only ONE micro-batch (may leave data behind). `availableNow=True` processes ALL available data across multiple micro-batches. Always prefer `availableNow`.
 
 ---
 
 ## Output Modes
 
-| Mode | Behavior | Use |
-|------|----------|-----|
-| **append** | Only new rows written to sink | File ingestion (most common) |
-| **complete** | Entire result table rewritten | Aggregations without watermark |
+| Mode | Behavior | When to Use |
+|------|----------|-------------|
+| **append** | Only new rows written to sink | No aggregations, file ingestion (most common) |
+| **complete** | Entire result table rewritten each trigger | Aggregations without watermark |
 | **update** | Only changed rows written | Aggregations with watermark |
+
+**Rules**:
+- No aggregations: only `append` works
+- Aggregations without watermark: only `complete` works
+- Aggregations with watermark: `append` or `update`
 
 ---
 
-## Checkpoint Management
+## Checkpointing
+
+Checkpoints are the backbone of exactly-once processing. They persist the streaming query's progress so it can resume from where it left off after a failure or restart.
 
 ```
 s3://bucket/checkpoints/my_stream/
     commits/       # completed micro-batch IDs
     offsets/       # what data was read in each micro-batch
-    sources/       # source-specific state (processed file list)
+    sources/       # source-specific state (e.g., file list)
     state/         # aggregation state (if applicable)
     metadata       # stream metadata
 ```
 
 **Best practices**:
-- Store checkpoints on S3 (same region as data)
-- Never share a checkpoint directory between different streams
+- Store on S3 (same region as data for low latency)
+- Never share a checkpoint between different streams
 - Never delete a checkpoint unless you want to reprocess all data
 - Use consistent naming: `s3://bucket/checkpoints/{table_name}`
 
 ---
 
-## Common Errors and Troubleshooting
+## Stream-Static Joins
 
-### `PermanentRedirect` Error
-Your bucket region does not match. Set the correct AWS region:
+A common pattern is joining a streaming DataFrame with a static (batch) DataFrame for enrichment. This is how you add customer names, product details, etc. to streaming events.
+
 ```python
-.option("cloudFiles.region", "us-east-1")  # must match your S3 bucket region
+# Streaming source
+df_orders_stream = spark.readStream.table("orders_bronze")
+
+# Static lookup (read as batch)
+df_customers = spark.table("customers_lookup")
+
+# Join: streaming orders with static customers
+df_enriched = df_orders_stream.join(df_customers, "customer_id", "inner")
+
+# Write enriched stream
+df_enriched.writeStream.format("delta").table("orders_silver")
 ```
 
-### `GetBucketNotification AccessDenied`
-The Databricks runtime role needs `s3:GetBucketNotification` permission. Add it to:
-1. The IAM role policy attached to the Databricks runtime role
-2. The S3 bucket policy granting the role access to that bucket-level action
-
-### Managed File Events: "no matching external location found"
-The S3 path is not inside a Unity Catalog external location with file events enabled. Steps:
-1. Create the storage credential
-2. Create the external location for the S3 prefix
-3. Enable file events on that external location
-
-### Managed File Events: fails during `sns.subscribe`
-The external location was found, but Databricks could not finish SNS/SQS subscription. Check SNS and SQS permissions and inspect CloudTrail for the exact failing API.
-
-### CloudTrail shows `anonymous` identity with `AccessDenied`
-This does **not** mean public internet access. It means S3 did not recognize the request as an authorized principal. Re-check:
-- Which IAM role the Databricks runtime actually uses (check CloudTrail for the assumed role)
-- The bucket policy principal ARN
-- Whether you are using classic notifications vs managed file events
+**Important**: The static DataFrame is re-read on each micro-batch, so it always reflects the latest data.
 
 ---
 
-## Recommended Learning Progression
+## Watermarking
 
-| Step | Topic | Mode |
-|------|-------|------|
-| 1 | Auto Loader basics | Directory listing |
-| 2 | Unity Catalog metadata columns | `_metadata.file_path` |
-| 3 | Premium workspace IAM role setup | AWS IAM |
-| 4 | Storage credential + external location | Unity Catalog |
-| 5 | Managed file events | Production |
-| Appendix | Classic `useNotifications=true` | Legacy reference |
+Watermarking tells Structured Streaming how long to wait for late-arriving data before finalizing results.
+
+```python
+df_with_watermark = (
+    df_stream
+    .withWatermark("event_time", "10 minutes")  # allow 10 min late
+    .groupBy(
+        window("event_time", "5 minutes"),       # 5-min tumbling window
+        "customer_id"
+    )
+    .count()
+)
+```
+
+**How it works**:
+1. Spark tracks the maximum event time seen so far
+2. The watermark = max event time - threshold (e.g., 10 minutes)
+3. Data arriving before the watermark is included in aggregations
+4. Data arriving after the watermark may be dropped
+
+**Without watermark**: Spark must keep ALL state forever (memory grows unbounded)
+**With watermark**: Spark can discard old state, keeping memory bounded
+
+---
+
+## Stream Monitoring
+
+### Check Active Streams
+
+```python
+for stream in spark.streams.active:
+    print(f"Name: {stream.name}, ID: {stream.id}")
+    print(f"Status: {stream.status}")
+    print(f"Progress: {stream.lastProgress}")
+```
+
+### Stream Progress Details
+
+`stream.lastProgress` returns a dict with:
+- `numInputRows`: rows processed in last micro-batch
+- `inputRowsPerSecond`: ingestion rate
+- `processedRowsPerSecond`: processing rate
+- `durationMs`: timing breakdown
+
+### Graceful Shutdown
+
+```python
+for stream in spark.streams.active:
+    print(f"Stopping: {stream.name}")
+    stream.stop()
+    stream.awaitTermination()
+```
+
+---
+
+## Micro-Batch Execution Model
+
+Structured Streaming processes data in micro-batches:
+
+```
+Trigger fires
+    |
+    v
+Read new data from source (Delta log, file listing, Kafka offsets)
+    |
+    v
+Create micro-batch DataFrame
+    |
+    v
+Execute query plan (same as batch Spark)
+    |
+    v
+Write results to sink
+    |
+    v
+Commit checkpoint (offset, state)
+    |
+    v
+Wait for next trigger
+```
+
+Each micro-batch is a complete Spark job. The checkpoint records which data has been processed, enabling exactly-once semantics.
 
 ---
 
@@ -470,37 +321,37 @@ This does **not** mean public internet access. It means S3 did not recognize the
 
 | Feature | AWS | Azure | GCP |
 |---------|-----|-------|-----|
-| Object Storage | S3 | ADLS Gen2 | GCS |
-| Notification Service | S3 Events -> SQS | Event Grid -> Queue Storage | Pub/Sub |
-| Managed file events | External location + file events | External location + file events | External location + file events |
-| Classic notifications | S3 + SNS + SQS | ADLS + Event Grid + Queue | GCS + Pub/Sub |
-| Directory listing | Supported | Supported | Supported |
+| Recommended sink | Delta Lake on S3 | Delta Lake on ADLS | Delta Lake on GCS |
+| Kafka source | Amazon MSK | Azure Event Hubs | Confluent on GCP |
+| Checkpoint storage | S3 | ADLS Gen2 | GCS |
+| Workflow orchestration | Databricks Workflows | Databricks Workflows | Databricks Workflows |
 
 ---
 
 ## Certification Tip
 
 The **Databricks Certified Data Engineer Associate** exam tests:
-- Auto Loader configuration: `cloudFiles.format`, `cloudFiles.schemaLocation`
-- Difference between notification modes and directory listing
-- Checkpoint directories and exactly-once guarantees
-- Trigger modes: `availableNow`, `processingTime`, `once` (deprecated)
-- Schema evolution modes: `addNewColumns`, `rescue`, `failOnNewColumns`
-- Output modes: `append`, `complete`, `update`
+- `spark.read` vs `spark.readStream` -- batch vs streaming
+- Checkpoint purpose and exactly-once guarantees
+- Trigger modes: know when to use `availableNow` vs `processingTime`
+- Output modes: which modes work with aggregations
+- Watermarking: syntax and effect on late data
+- Stream-static joins: how static side is refreshed
+- Relationship between Structured Streaming and Auto Loader
 
 ---
 
 ## Key Takeaways
 
-1. **Start with directory listing** (`useNotifications=false`) -- it always works, zero setup
-2. **Graduate to managed file events** (`useManagedFileEvents=true`) for production on Premium
-3. **Avoid classic notifications** as your main path -- more moving parts, more failure modes
-4. Use `_metadata.file_path` instead of `input_file_name()` in Unity Catalog
-5. **Schema inference** is persisted to `schemaLocation` and only runs once
-6. **Schema evolution** with `addNewColumns` automatically adapts to new fields
-7. **Checkpoints** enable exactly-once processing -- never share or delete them
-8. **`trigger(availableNow=True)`** is the recommended trigger for scheduled Workflows
-9. Always set `cloudFiles.region` when using classic notifications
+1. **Structured Streaming** is Spark's stream processing ENGINE -- it handles micro-batch execution, checkpointing, fault tolerance, and state management
+2. **Auto Loader** is a specialized file ingestion SOURCE built on top of Structured Streaming (covered in Day 20)
+3. Every Auto Loader pipeline IS a Structured Streaming query -- same engine underneath
+4. **Delta Lake** is the recommended streaming source and sink
+5. **Stream-static joins** enrich streaming data with batch lookup tables
+6. **Watermarking** bounds state and handles late data in aggregations
+7. **`trigger(availableNow=True)`** is the recommended trigger for scheduled Workflows
+8. **Checkpoints** enable exactly-once processing -- never share or delete them
+9. Use **append** mode for non-aggregation pipelines, **complete** for aggregations
 
 ---
 
@@ -509,15 +360,15 @@ The **Databricks Certified Data Engineer Associate** exam tests:
 See the accompanying notebook: [`19-structured-streaming_notebook.py`](19-structured-streaming_notebook.py)
 
 The lab covers:
-- **Track A**: Directory listing mode (zero-setup, always works)
-- **Track B**: Managed file events (modern production, Unity Catalog)
-- **Track C**: Classic notifications (appendix/legacy)
-- Incremental ingestion with new file batches
-- Schema evolution with new columns
+- Streaming from Delta tables
+- Stream-static joins for enrichment
+- Streaming from raw files (standard file source)
 - Trigger strategies comparison
-- Full Bronze -> Silver streaming pipeline
-- Troubleshooting common AWS errors
+- Output modes: append vs complete
+- Watermarking for late data
+- Stream monitoring and graceful shutdown
+- Relationship to Auto Loader (conceptual)
 
 ## Next Steps
 
-- [Day 20: Advanced Streaming](../day20-advanced-streaming/)
+- [Day 20: Auto Loader](../day20-auto-loader/) -- the optimized file ingestion source built on Structured Streaming

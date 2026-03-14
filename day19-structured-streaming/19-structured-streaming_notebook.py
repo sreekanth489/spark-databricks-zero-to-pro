@@ -4,37 +4,30 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC # Day 19: Structured Streaming & Auto Loader
+# MAGIC # Day 19: Structured Streaming -- The Streaming Engine
 # MAGIC
-# MAGIC **Objective**: Master Auto Loader for incremental file ingestion from AWS S3 using three distinct modes
+# MAGIC **Objective**: Master Spark Structured Streaming as the core stream processing engine
 # MAGIC
 # MAGIC In this lab we will:
-# MAGIC 1. Set up Unity Catalog schema and S3 paths
-# MAGIC 2. Generate sample data files to simulate data landing in S3
-# MAGIC 3. **Track A**: Auto Loader with **directory listing mode** (simplest, always works)
-# MAGIC 4. **Track B**: Auto Loader with **managed file events** (modern, Unity Catalog + Premium)
-# MAGIC 5. **Track C**: Auto Loader with **classic file notifications** (older, more moving parts)
-# MAGIC 6. Demonstrate incremental processing with new file batches
-# MAGIC 7. Handle schema inference, evolution, and rescue columns
-# MAGIC 8. Compare trigger strategies and monitor streaming queries
-# MAGIC 9. Build a full Bronze -> Silver streaming pipeline
+# MAGIC 1. Understand Structured Streaming as an ENGINE (vs Auto Loader as a SOURCE)
+# MAGIC 2. Stream data from Delta tables
+# MAGIC 3. Perform stream-static joins for data enrichment
+# MAGIC 4. Stream from raw file sources (standard Spark, not Auto Loader)
+# MAGIC 5. Compare trigger strategies: `availableNow` vs `processingTime`
+# MAGIC 6. Demonstrate output modes: append vs complete
+# MAGIC 7. Apply watermarking for late data handling
+# MAGIC 8. Monitor and manage streaming queries
 # MAGIC
-# MAGIC **Three Auto Loader Modes on AWS**:
+# MAGIC **Key Distinction**:
 # MAGIC ```
-# MAGIC Track A: Directory Listing (recommended starter path)
-# MAGIC   cloudFiles.useNotifications = false
-# MAGIC   Auto Loader scans S3 directory for new files
-# MAGIC   Zero infrastructure setup
+# MAGIC Structured Streaming = the streaming ENGINE
+# MAGIC   - Micro-batch execution, checkpointing, fault tolerance, state management
+# MAGIC   - spark.readStream / spark.writeStream
 # MAGIC
-# MAGIC Track B: Managed File Events (recommended production path)
-# MAGIC   cloudFiles.useManagedFileEvents = true
-# MAGIC   Requires Unity Catalog external location with file events enabled
-# MAGIC   Modern, cleaner than classic notifications
-# MAGIC
-# MAGIC Track C: Classic File Notifications (appendix / legacy)
-# MAGIC   cloudFiles.useNotifications = true
-# MAGIC   Auto Loader auto-manages S3 bucket notifications + SNS/SQS per stream
-# MAGIC   More moving parts, more AWS-side failure modes
+# MAGIC Auto Loader = a specialized file ingestion SOURCE (Day 20)
+# MAGIC   - Built ON TOP of Structured Streaming
+# MAGIC   - spark.readStream.format("cloudFiles")
+# MAGIC   - Optimized file discovery, schema inference, schema evolution
 # MAGIC ```
 # MAGIC
 # MAGIC **Platform**: Databricks on AWS with Unity Catalog
@@ -43,7 +36,7 @@
 
 # MAGIC %md
 # MAGIC ---
-# MAGIC ## Setup: Unity Catalog, S3 Paths, and Imports
+# MAGIC ## Setup
 
 # COMMAND ----------
 
@@ -54,7 +47,7 @@
 
 # MAGIC %sql
 # MAGIC CREATE SCHEMA IF NOT EXISTS streaming_lab
-# MAGIC COMMENT 'Day 19: Structured Streaming and Auto Loader lab'
+# MAGIC COMMENT 'Day 19: Structured Streaming engine lab'
 
 # COMMAND ----------
 
@@ -65,743 +58,354 @@
 
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType, LongType, TimestampType
 from pyspark.sql.functions import (
-    col, current_timestamp, input_file_name, from_unixtime,
-    lit, round as _round, date_format, to_timestamp
+    col, current_timestamp, from_unixtime, lit, window,
+    count, sum as _sum, avg as _avg, max as _max, min as _min,
+    round as _round, date_format, expr
 )
-from delta.tables import DeltaTable
 import random
 import time
 
-# S3 paths for this lab
 base_path = "s3://databricks-zero-to-pro/streaming_lab"
-raw_data_path = f"{base_path}/raw"
-bronze_path = f"{base_path}/bronze"
 checkpoint_path = f"{base_path}/checkpoints"
-schema_path = f"{base_path}/schemas"
-bad_records_path = f"{base_path}/bad_records"
+raw_files_path = f"{base_path}/raw_files"
 
-print("Streaming Lab Storage Layout (AWS S3)")
-print("=" * 50)
-print(f"Raw data:     {raw_data_path}")
-print(f"Bronze:       {bronze_path}")
+print(f"Base path:    {base_path}")
 print(f"Checkpoints:  {checkpoint_path}")
-print(f"Schemas:      {schema_path}")
-print(f"Bad records:  {bad_records_path}")
+print(f"Raw files:    {raw_files_path}")
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ---
-# MAGIC ## Generate Sample Data Files
+# MAGIC ## Step 1: Generate Sample Data
 # MAGIC
-# MAGIC We simulate data landing in S3 by writing multiple batches of Parquet and JSON files.
-# MAGIC Each batch represents a new set of files arriving at different times.
+# MAGIC Create source Delta tables that we will stream FROM.
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Parquet Files (for Track A - Directory Listing)
+# MAGIC ### Source Orders Table (will stream from this)
 
 # COMMAND ----------
 
-# Schema for order events
+random.seed(42)
+
+orders_data = []
+base_ts = 1700000000  # Nov 2023
+for i in range(1, 51):
+    orders_data.append((
+        f"ORD-{i:04d}",
+        random.choice([f"C{j:03d}" for j in range(1, 9)]),
+        random.choice([f"P{j:03d}" for j in range(1, 9)]),
+        random.randint(1, 5),
+        float(random.randint(10, 200)),
+        base_ts + random.randint(0, 86400 * 30),
+        random.choice(["credit_card", "debit_card", "paypal"]),
+    ))
+
 orders_schema = StructType([
     StructField("order_id", StringType(), False),
     StructField("customer_id", StringType(), True),
     StructField("product_id", StringType(), True),
     StructField("quantity", IntegerType(), True),
-    StructField("order_timestamp", LongType(), True),
+    StructField("amount", DoubleType(), True),
+    StructField("event_ts", LongType(), True),
     StructField("payment_method", StringType(), True),
 ])
 
-# Batch 1: initial orders
-random.seed(42)
-orders_batch1 = []
-base_ts = 1700000000
-for i in range(1, 31):
-    orders_batch1.append((
-        f"ORD-{i:04d}",
-        random.choice([f"C{j:03d}" for j in range(1, 9)]),
-        random.choice([f"P{j:03d}" for j in range(1, 9)]),
-        random.randint(1, 5),
-        base_ts + random.randint(0, 86400 * 30),
-        random.choice(["credit_card", "debit_card", "paypal", "bank_transfer"]),
-    ))
+df_orders = spark.createDataFrame(orders_data, orders_schema)
 
-df_batch1 = spark.createDataFrame(orders_batch1, orders_schema)
-df_batch1.write.mode("overwrite").parquet(f"{raw_data_path}/parquet_orders/batch1")
-print(f"Batch 1: {df_batch1.count()} orders written as Parquet")
-df_batch1.display()
+# Write as a Delta table -- this will be our streaming source
+(df_orders.write
+    .format("delta")
+    .mode("overwrite")
+    .saveAsTable("source_orders")
+)
+
+print(f"Source orders table: {df_orders.count()} records")
+df_orders.display()
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### JSON Files (for Track B and C - Notification Modes)
+# MAGIC ### Customers Lookup Table (static, for joins)
 
 # COMMAND ----------
 
-# Batch 1: JSON events (clickstream-style data)
-random.seed(100)
-events_batch1 = []
-for i in range(1, 26):
-    events_batch1.append((
-        f"EVT-{i:05d}",
-        random.choice([f"C{j:03d}" for j in range(1, 9)]),
-        random.choice(["page_view", "add_to_cart", "checkout", "purchase", "search"]),
-        random.choice(["homepage", "product_detail", "cart", "checkout", "search_results"]),
-        random.choice(["mobile", "desktop", "tablet"]),
-        f"session-{random.randint(1000, 9999)}",
-        base_ts + random.randint(0, 86400 * 7),
-    ))
+customers_data = [
+    ("C001", "Alice", "Johnson", "New York", "Gold"),
+    ("C002", "Bob", "Smith", "Los Angeles", "Silver"),
+    ("C003", "Carol", "Williams", "Chicago", "Bronze"),
+    ("C004", "David", "Brown", "Houston", "Gold"),
+    ("C005", "Eve", "Davis", "Phoenix", "Silver"),
+    ("C006", "Frank", "Miller", "Seattle", "Gold"),
+    ("C007", "Grace", "Wilson", "Denver", "Bronze"),
+    ("C008", "Henry", "Moore", "Boston", "Silver"),
+]
 
-events_schema = StructType([
-    StructField("event_id", StringType(), False),
-    StructField("customer_id", StringType(), True),
-    StructField("event_type", StringType(), True),
-    StructField("page", StringType(), True),
-    StructField("device", StringType(), True),
-    StructField("session_id", StringType(), True),
-    StructField("event_timestamp", LongType(), True),
+customers_schema = StructType([
+    StructField("customer_id", StringType(), False),
+    StructField("first_name", StringType(), True),
+    StructField("last_name", StringType(), True),
+    StructField("city", StringType(), True),
+    StructField("tier", StringType(), True),
 ])
 
-df_events_batch1 = spark.createDataFrame(events_batch1, events_schema)
-df_events_batch1.write.mode("overwrite").json(f"{raw_data_path}/json_events/batch1")
-print(f"Events Batch 1: {df_events_batch1.count()} events written as JSON")
-df_events_batch1.display()
+df_customers = spark.createDataFrame(customers_data, customers_schema)
+df_customers.write.format("delta").mode("overwrite").saveAsTable("customers_lookup")
+
+print("Customers lookup table created")
+df_customers.display()
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ---
-# MAGIC ## Track A: Auto Loader with Directory Listing Mode
+# MAGIC ## Step 2: Streaming from a Delta Table
 # MAGIC
-# MAGIC **This is the recommended starter path.** Directory listing is the default mode.
+# MAGIC The most common streaming pattern: read from a Delta table as a stream.
+# MAGIC Delta Lake tracks new data via its transaction log -- no directory listing needed.
 # MAGIC
-# MAGIC How it works:
-# MAGIC 1. Scans the S3 directory for files
-# MAGIC 2. Compares against files already processed (tracked in checkpoint via RocksDB)
-# MAGIC 3. Reads only new/unprocessed files
-# MAGIC 4. Uses incremental listing optimization on subsequent runs
-# MAGIC
-# MAGIC **Why start here**:
-# MAGIC - Least setup -- zero infrastructure required
-# MAGIC - Most reliable -- works on Free and Premium editions
-# MAGIC - Great for learning, development, and moderate-scale production
-# MAGIC
-# MAGIC **Key option**: `cloudFiles.useNotifications = false`
+# MAGIC **This is the recommended source for downstream streaming in Medallion Architecture.**
+# MAGIC (Bronze -> Silver, Silver -> Gold)
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ### A1. Basic Auto Loader - Directory Listing (Parquet)
-# MAGIC
-# MAGIC No SQS, no SNS, no event notifications -- just point to S3 and go.
-# MAGIC
-# MAGIC **Important**: In Unity Catalog, use `_metadata.file_path` and `_metadata.file_name`
-# MAGIC instead of `input_file_name()` for source file tracking.
-
-# COMMAND ----------
-
-# Auto Loader with directory listing mode (default)
-df_stream_dir = (
+# Read the source orders table as a stream
+df_orders_stream = (
     spark.readStream
-        .format("cloudFiles")
-        .option("cloudFiles.format", "parquet")
-        .option("cloudFiles.useNotifications", "false")        # explicit: directory listing mode
-        .option("cloudFiles.includeExistingFiles", "true")     # process existing files on first run
-        .option("cloudFiles.schemaLocation", f"{schema_path}/dir_listing_orders")
-        .load(f"{raw_data_path}/parquet_orders/")
-        # Add ingestion metadata using _metadata (Unity Catalog safe)
-        .withColumn("load_time", current_timestamp())
-        .withColumn("source_file", col("_metadata.file_path"))
+        .format("delta")
+        .table("source_orders")
 )
 
-# Write to Bronze table using trigger(availableNow=True)
-# This processes all available files, then stops -- perfect for scheduled jobs
-query_dir = (
-    df_stream_dir.writeStream
+# Apply simple transformations
+df_bronze = (
+    df_orders_stream
+    .filter(col("quantity") > 0)
+    .withColumn("load_time", current_timestamp())
+    .withColumn("order_date", from_unixtime(col("event_ts"), "yyyy-MM-dd HH:mm:ss").cast("timestamp"))
+)
+
+# Write to Bronze table with trigger(availableNow=True)
+query_bronze = (
+    df_bronze.writeStream
         .format("delta")
-        .option("checkpointLocation", f"{checkpoint_path}/dir_listing_bronze")
+        .option("checkpointLocation", f"{checkpoint_path}/bronze_orders")
         .outputMode("append")
         .trigger(availableNow=True)
-        .table("bronze_orders_dir_listing")
+        .table("bronze_orders")
 )
 
-# Wait for the stream to complete
-query_dir.awaitTermination()
-print("Directory listing stream completed")
+query_bronze.awaitTermination()
+print("Delta streaming to Bronze completed")
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC -- Verify Bronze table: raw records with metadata from Auto Loader
-# MAGIC SELECT order_id, customer_id, product_id, quantity, payment_method,
-# MAGIC        load_time, source_file
-# MAGIC FROM bronze_orders_dir_listing
-# MAGIC ORDER BY order_id
+# MAGIC SELECT order_id, customer_id, product_id, quantity, amount,
+# MAGIC        order_date, payment_method, load_time
+# MAGIC FROM bronze_orders
+# MAGIC ORDER BY order_date DESC
 # MAGIC LIMIT 10
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC SELECT COUNT(*) as total_records FROM bronze_orders_dir_listing
+# MAGIC SELECT COUNT(*) as total_records FROM bronze_orders
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### A2. Incremental Ingestion - Add New Files
+# MAGIC ### Incremental: Add New Data to Source, Re-stream
 # MAGIC
-# MAGIC Simulate new data arriving in S3. Auto Loader will detect and process ONLY the new files
-# MAGIC because the checkpoint tracks which files have already been processed.
+# MAGIC When new rows are added to the source Delta table, the stream picks up ONLY the new rows.
 
 # COMMAND ----------
 
-# Generate Batch 2: new orders
-random.seed(55)
-orders_batch2 = []
+# Add 10 more orders to the source table
+random.seed(99)
+new_orders = []
 base_ts2 = 1700000000 + 86400 * 31
-for i in range(31, 51):
-    orders_batch2.append((
+for i in range(51, 61):
+    new_orders.append((
         f"ORD-{i:04d}",
         random.choice([f"C{j:03d}" for j in range(1, 9)]),
         random.choice([f"P{j:03d}" for j in range(1, 9)]),
         random.randint(1, 5),
+        float(random.randint(10, 200)),
         base_ts2 + random.randint(0, 86400 * 15),
-        random.choice(["credit_card", "debit_card", "paypal", "bank_transfer"]),
+        random.choice(["credit_card", "debit_card", "paypal"]),
     ))
 
-df_batch2 = spark.createDataFrame(orders_batch2, orders_schema)
-df_batch2.write.mode("overwrite").parquet(f"{raw_data_path}/parquet_orders/batch2")
-print(f"Batch 2: {df_batch2.count()} new orders written to S3")
+df_new = spark.createDataFrame(new_orders, orders_schema)
+df_new.write.format("delta").mode("append").saveAsTable("source_orders")
+print(f"Added {df_new.count()} new orders to source table")
 
 # COMMAND ----------
 
-# Re-run the SAME Auto Loader stream with SAME checkpoint -- only processes batch2
-df_stream_dir_incr = (
+# Re-run stream with SAME checkpoint -- only processes new rows
+query_bronze_incr = (
     spark.readStream
-        .format("cloudFiles")
-        .option("cloudFiles.format", "parquet")
-        .option("cloudFiles.useNotifications", "false")
-        .option("cloudFiles.includeExistingFiles", "true")
-        .option("cloudFiles.schemaLocation", f"{schema_path}/dir_listing_orders")
-        .load(f"{raw_data_path}/parquet_orders/")
-        .withColumn("load_time", current_timestamp())
-        .withColumn("source_file", col("_metadata.file_path"))
-)
-
-query_dir_incr = (
-    df_stream_dir_incr.writeStream
         .format("delta")
-        .option("checkpointLocation", f"{checkpoint_path}/dir_listing_bronze")  # same checkpoint!
-        .outputMode("append")
-        .trigger(availableNow=True)
-        .table("bronze_orders_dir_listing")
-)
-
-query_dir_incr.awaitTermination()
-print("Incremental ingestion completed -- only new files processed")
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC -- Verify: count should now include batch 1 + batch 2
-# MAGIC SELECT COUNT(*) as total_records,
-# MAGIC        COUNT(DISTINCT source_file) as unique_source_files
-# MAGIC FROM bronze_orders_dir_listing
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC -- See which source files were ingested and when
-# MAGIC SELECT source_file, COUNT(*) as records, MIN(load_time) as ingested_at
-# MAGIC FROM bronze_orders_dir_listing
-# MAGIC GROUP BY source_file
-# MAGIC ORDER BY ingested_at
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### A3. Directory Listing - Advanced Options
-# MAGIC
-# MAGIC Control ingestion rate, file filtering, and subdirectory scanning.
-
-# COMMAND ----------
-
-# Advanced directory listing with rate limiting and file filtering
-df_stream_advanced = (
-    spark.readStream
-        .format("cloudFiles")
-        .option("cloudFiles.format", "parquet")
-        .option("cloudFiles.useNotifications", "false")
-        # Rate limiting: prevent overwhelming downstream systems
-        .option("cloudFiles.maxFilesPerTrigger", "100")        # max files per micro-batch
-        .option("cloudFiles.maxBytesPerTrigger", "1g")         # max bytes per micro-batch
-        # File filtering
-        .option("pathGlobFilter", "*.parquet")                 # only parquet files
-        .option("recursiveFileLookup", "true")                 # scan subdirectories
-        # Schema
-        .option("cloudFiles.schemaLocation", f"{schema_path}/dir_listing_advanced")
-        .load(f"{raw_data_path}/parquet_orders/")
+        .table("source_orders")
+        .filter(col("quantity") > 0)
         .withColumn("load_time", current_timestamp())
-        .withColumn("source_file", col("_metadata.file_path"))
-)
-
-# Preview the stream schema (does not start processing)
-print("Stream schema:")
-df_stream_advanced.printSchema()
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ---
-# MAGIC ## Track B: Auto Loader with Managed File Events (Recommended Production)
-# MAGIC
-# MAGIC **This is the modern, recommended production path** on Databricks AWS Premium.
-# MAGIC
-# MAGIC How it works:
-# MAGIC 1. You create a **Unity Catalog external location** pointing to your S3 prefix
-# MAGIC 2. You **enable file events** on that external location
-# MAGIC 3. Databricks manages the SNS/SQS infrastructure behind the scenes
-# MAGIC 4. Auto Loader receives near-real-time notifications when new files land
-# MAGIC
-# MAGIC **Why use managed file events over classic notifications**:
-# MAGIC - Cleaner setup -- no per-stream SNS/SQS resource management
-# MAGIC - Better integration with Unity Catalog governance
-# MAGIC - Databricks manages the lifecycle of notification resources
-# MAGIC - No need for broad SNS/SQS IAM permissions on the Databricks runtime role
-# MAGIC
-# MAGIC **Prerequisites**:
-# MAGIC 1. Databricks Premium workspace
-# MAGIC 2. Storage credential created in Unity Catalog for your S3 bucket
-# MAGIC 3. External location created for the S3 prefix
-# MAGIC 4. File events enabled on the external location
-# MAGIC
-# MAGIC **Key option**: `cloudFiles.useManagedFileEvents = true`
-# MAGIC
-# MAGIC **Do NOT combine** with `cloudFiles.useNotifications = true` -- they are mutually exclusive.
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### B1. Setup Checklist (run once per environment)
-# MAGIC
-# MAGIC Before using managed file events, complete these steps in your Databricks workspace:
-# MAGIC
-# MAGIC ```sql
-# MAGIC -- Step 1: Create storage credential (Admin only)
-# MAGIC -- This maps an IAM role to Unity Catalog
-# MAGIC CREATE STORAGE CREDENTIAL my_s3_credential
-# MAGIC WITH (AWS_IAM_ROLE = 'arn:aws:iam::015747470350:role/databricks-s3-ingest-8a85f-db_s3_iam');
-# MAGIC
-# MAGIC -- Step 2: Create external location for the S3 prefix
-# MAGIC CREATE EXTERNAL LOCATION streaming_lab_location
-# MAGIC URL 's3://databricks-zero-to-pro/streaming_lab/'
-# MAGIC WITH (STORAGE CREDENTIAL my_s3_credential);
-# MAGIC
-# MAGIC -- Step 3: Enable file events on the external location
-# MAGIC ALTER EXTERNAL LOCATION streaming_lab_location
-# MAGIC ENABLE FILE EVENTS;
-# MAGIC ```
-# MAGIC
-# MAGIC The IAM role needs these permissions on the S3 bucket:
-# MAGIC - `s3:GetBucketNotification`, `s3:PutBucketNotification`, `s3:GetBucketLocation`
-# MAGIC - Standard object access: `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:ListBucket`
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### B2. Managed File Events - JSON Ingestion
-
-# COMMAND ----------
-
-# Auto Loader with managed file events (modern production pattern)
-df_stream_managed = (
-    spark.readStream
-        .format("cloudFiles")
-        .option("cloudFiles.format", "json")
-        .option("cloudFiles.useManagedFileEvents", "true")     # managed file events mode
-        .option("cloudFiles.inferColumnTypes", "true")          # infer actual types, not just strings
-        .option("cloudFiles.schemaLocation", f"{schema_path}/managed_events")
-        .option("cloudFiles.schemaEvolutionMode", "addNewColumns")
-        .load(f"{raw_data_path}/json_events/")
-        # Use _metadata for Unity Catalog-safe source tracking
-        .withColumn("load_time", current_timestamp())
-        .withColumn("source_file", col("_metadata.file_path"))
-        .withColumn("source_file_name", col("_metadata.file_name"))
-)
-
-query_managed = (
-    df_stream_managed.writeStream
-        .format("delta")
-        .option("checkpointLocation", f"{checkpoint_path}/managed_bronze")
-        .outputMode("append")
-        .trigger(availableNow=True)
-        .table("bronze_events_managed")
-)
-
-query_managed.awaitTermination()
-print("Managed file events stream completed")
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC SELECT * FROM bronze_events_managed LIMIT 10
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC SELECT COUNT(*) as total_events FROM bronze_events_managed
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### B3. Incremental Ingestion with Managed File Events
-
-# COMMAND ----------
-
-# Generate Events Batch 2
-random.seed(200)
-events_batch2 = []
-for i in range(26, 51):
-    events_batch2.append((
-        f"EVT-{i:05d}",
-        random.choice([f"C{j:03d}" for j in range(1, 9)]),
-        random.choice(["page_view", "add_to_cart", "checkout", "purchase", "search"]),
-        random.choice(["homepage", "product_detail", "cart", "checkout", "search_results"]),
-        random.choice(["mobile", "desktop", "tablet"]),
-        f"session-{random.randint(1000, 9999)}",
-        base_ts + random.randint(86400 * 7, 86400 * 14),
-    ))
-
-df_events_batch2 = spark.createDataFrame(events_batch2, events_schema)
-df_events_batch2.write.mode("overwrite").json(f"{raw_data_path}/json_events/batch2")
-print(f"Events Batch 2: {df_events_batch2.count()} new events written to S3")
-
-# COMMAND ----------
-
-# Re-run with same checkpoint -- only processes batch2
-query_managed_incr = (
-    spark.readStream
-        .format("cloudFiles")
-        .option("cloudFiles.format", "json")
-        .option("cloudFiles.useManagedFileEvents", "true")
-        .option("cloudFiles.inferColumnTypes", "true")
-        .option("cloudFiles.schemaLocation", f"{schema_path}/managed_events")
-        .option("cloudFiles.schemaEvolutionMode", "addNewColumns")
-        .load(f"{raw_data_path}/json_events/")
-        .withColumn("load_time", current_timestamp())
-        .withColumn("source_file", col("_metadata.file_path"))
-        .withColumn("source_file_name", col("_metadata.file_name"))
+        .withColumn("order_date", from_unixtime(col("event_ts"), "yyyy-MM-dd HH:mm:ss").cast("timestamp"))
         .writeStream
         .format("delta")
-        .option("checkpointLocation", f"{checkpoint_path}/managed_bronze")  # same checkpoint
+        .option("checkpointLocation", f"{checkpoint_path}/bronze_orders")  # same checkpoint
         .outputMode("append")
         .trigger(availableNow=True)
-        .table("bronze_events_managed")
+        .table("bronze_orders")
 )
 
-query_managed_incr.awaitTermination()
-print("Incremental managed file events ingestion completed")
+query_bronze_incr.awaitTermination()
+print("Incremental streaming completed -- only new rows processed")
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC -- Verify both batches ingested
-# MAGIC SELECT source_file, COUNT(*) as records, MIN(load_time) as ingested_at
-# MAGIC FROM bronze_events_managed
-# MAGIC GROUP BY source_file
-# MAGIC ORDER BY ingested_at
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC SELECT COUNT(*) as total_events FROM bronze_events_managed
+# MAGIC -- Should now have 50 + 10 = 60 records
+# MAGIC SELECT COUNT(*) as total_records FROM bronze_orders
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ---
-# MAGIC ## Track C: Classic File Notifications (Appendix)
+# MAGIC ## Step 3: Stream-Static Join
 # MAGIC
-# MAGIC **This is the older approach** where Auto Loader auto-manages S3 bucket notifications
-# MAGIC plus SNS/SQS resources per stream. It has more moving parts and more AWS-side failure modes.
+# MAGIC A very common pattern: join a **streaming** DataFrame with a **static** (batch) DataFrame.
+# MAGIC This is how you enrich streaming events with reference data (customer names, product details, etc.)
 # MAGIC
-# MAGIC **Use this only if**:
-# MAGIC - You cannot use managed file events (no Unity Catalog external location)
-# MAGIC - You need fine-grained control over SNS/SQS resources
-# MAGIC - You are on a non-Premium workspace without Unity Catalog
-# MAGIC
-# MAGIC **Key option**: `cloudFiles.useNotifications = true`
-# MAGIC
-# MAGIC **Important**: You MUST set `cloudFiles.region` to match your S3 bucket region,
-# MAGIC otherwise you will get a `PermanentRedirect` error.
+# MAGIC The static side is re-read on each micro-batch, so it always reflects the latest data.
 
 # COMMAND ----------
 
-# MAGIC %md
-# MAGIC ### C1. Classic Notifications - Auto Setup
-# MAGIC
-# MAGIC Databricks automatically creates SNS topic, SQS queue, and S3 event notifications.
-# MAGIC
-# MAGIC **Required IAM permissions** on the Databricks runtime role:
-# MAGIC - `s3:GetBucketNotification`, `s3:PutBucketNotification`
-# MAGIC - `sns:CreateTopic`, `sns:DeleteTopic`, `sns:GetTopicAttributes`, `sns:Subscribe`, etc.
-# MAGIC - `sqs:CreateQueue`, `sqs:DeleteQueue`, `sqs:ReceiveMessage`, `sqs:DeleteMessage`, etc.
-# MAGIC
-# MAGIC **Plus a bucket policy** granting the Databricks role `s3:GetBucketNotification` on the bucket.
-
-# COMMAND ----------
-
-# Classic file notifications -- requires IAM permissions and correct region
-df_stream_classic = (
+# Stream from Bronze
+df_bronze_stream = (
     spark.readStream
-        .format("cloudFiles")
-        .option("cloudFiles.format", "parquet")
-        .option("cloudFiles.useNotifications", "true")
-        .option("cloudFiles.region", "us-east-1")              # MUST match your S3 bucket region
-        .option("cloudFiles.includeExistingFiles", "true")
-        .option("cloudFiles.schemaLocation", f"{schema_path}/classic_notif_orders")
-        .load(f"{raw_data_path}/parquet_orders/")
-        .withColumn("load_time", current_timestamp())
-        .withColumn("source_file", col("_metadata.file_path"))
+        .format("delta")
+        .table("bronze_orders")
 )
 
-query_classic = (
-    df_stream_classic.writeStream
+# Static lookup (read as batch -- NOT streaming)
+df_cust_static = spark.table("customers_lookup")
+
+# Stream-static join: enrich orders with customer info
+df_enriched = (
+    df_bronze_stream
+    .join(df_cust_static, "customer_id", "inner")
+    .select(
+        "order_id", "order_date", "customer_id",
+        "first_name", "last_name", "city", "tier",
+        "product_id", "quantity", "amount", "payment_method"
+    )
+)
+
+# Write enriched data to Silver
+query_silver = (
+    df_enriched.writeStream
         .format("delta")
-        .option("checkpointLocation", f"{checkpoint_path}/classic_notif_bronze")
+        .option("checkpointLocation", f"{checkpoint_path}/silver_orders")
         .outputMode("append")
         .trigger(availableNow=True)
-        .table("bronze_orders_classic_notif")
+        .table("silver_orders")
 )
 
-query_classic.awaitTermination()
-print("Classic notification stream completed")
+query_silver.awaitTermination()
+print("Stream-static join to Silver completed")
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC SELECT COUNT(*) as total_records FROM bronze_orders_classic_notif
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### C2. Classic Notifications - Pre-Configured SQS Queue
-# MAGIC
-# MAGIC In production, pre-create the SQS queue and S3 notifications via Terraform/CloudFormation,
-# MAGIC then pass the queue URL to Auto Loader for full control over IAM, encryption, and lifecycle.
-# MAGIC
-# MAGIC ```python
-# MAGIC df_stream_preconfigured = (
-# MAGIC     spark.readStream
-# MAGIC         .format("cloudFiles")
-# MAGIC         .option("cloudFiles.format", "json")
-# MAGIC         .option("cloudFiles.useNotifications", "true")
-# MAGIC         .option("cloudFiles.queueUrl",
-# MAGIC                 "https://sqs.us-east-1.amazonaws.com/123456789012/my-autoloader-queue")
-# MAGIC         .option("cloudFiles.region", "us-east-1")
-# MAGIC         .option("cloudFiles.inferColumnTypes", "true")
-# MAGIC         .option("cloudFiles.schemaLocation", "s3://bucket/schemas/events")
-# MAGIC         .option("cloudFiles.schemaEvolutionMode", "addNewColumns")
-# MAGIC         .load("s3://my-data-bucket/raw/events/")
-# MAGIC         .withColumn("load_time", current_timestamp())
-# MAGIC         .withColumn("source_file", col("_metadata.file_path"))
-# MAGIC )
-# MAGIC ```
-# MAGIC
-# MAGIC ### Terraform Example for SQS + S3 Notifications
-# MAGIC
-# MAGIC ```hcl
-# MAGIC # SQS Queue for Auto Loader
-# MAGIC resource "aws_sqs_queue" "autoloader_queue" {
-# MAGIC   name                       = "autoloader-events-queue"
-# MAGIC   visibility_timeout_seconds = 300
-# MAGIC   message_retention_seconds  = 86400
-# MAGIC
-# MAGIC   policy = jsonencode({
-# MAGIC     Version = "2012-10-17"
-# MAGIC     Statement = [{
-# MAGIC       Effect    = "Allow"
-# MAGIC       Principal = { Service = "s3.amazonaws.com" }
-# MAGIC       Action    = "SQS:SendMessage"
-# MAGIC       Resource  = "arn:aws:sqs:us-east-1:123456789012:autoloader-events-queue"
-# MAGIC       Condition = {
-# MAGIC         ArnEquals = {
-# MAGIC           "aws:SourceArn" = aws_s3_bucket.data_bucket.arn
-# MAGIC         }
-# MAGIC       }
-# MAGIC     }]
-# MAGIC   })
-# MAGIC }
-# MAGIC
-# MAGIC # S3 Bucket Notification -> SQS
-# MAGIC resource "aws_s3_bucket_notification" "autoloader_notification" {
-# MAGIC   bucket = aws_s3_bucket.data_bucket.id
-# MAGIC
-# MAGIC   queue {
-# MAGIC     queue_arn     = aws_sqs_queue.autoloader_queue.arn
-# MAGIC     events        = ["s3:ObjectCreated:*"]
-# MAGIC     filter_prefix = "raw/events/"
-# MAGIC   }
-# MAGIC }
-# MAGIC ```
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ---
-# MAGIC ## Schema Inference, Evolution, and Rescue Columns
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Schema Inference
-# MAGIC
-# MAGIC Auto Loader infers the schema from source files and persists it to `schemaLocation`.
-# MAGIC On subsequent runs, the persisted schema is used (no re-inference needed).
-# MAGIC This makes restarts fast -- schema inference only happens on first execution.
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC -- View the inferred schema of the managed events table
-# MAGIC DESCRIBE bronze_events_managed
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Schema Evolution - Adding New Columns
-# MAGIC
-# MAGIC When source data adds new fields, Auto Loader can handle it automatically.
-# MAGIC Let's simulate adding a new `referrer` field to event data.
-
-# COMMAND ----------
-
-# Generate Batch 3 with a NEW column: referrer
-random.seed(300)
-events_batch3 = []
-for i in range(51, 66):
-    events_batch3.append((
-        f"EVT-{i:05d}",
-        random.choice([f"C{j:03d}" for j in range(1, 9)]),
-        random.choice(["page_view", "add_to_cart", "checkout", "purchase"]),
-        random.choice(["homepage", "product_detail", "cart", "checkout"]),
-        random.choice(["mobile", "desktop", "tablet"]),
-        f"session-{random.randint(1000, 9999)}",
-        base_ts + random.randint(86400 * 14, 86400 * 21),
-        random.choice(["google", "facebook", "direct", "email", "twitter"]),  # NEW FIELD
-    ))
-
-# Schema with new column
-events_schema_v2 = StructType([
-    StructField("event_id", StringType(), False),
-    StructField("customer_id", StringType(), True),
-    StructField("event_type", StringType(), True),
-    StructField("page", StringType(), True),
-    StructField("device", StringType(), True),
-    StructField("session_id", StringType(), True),
-    StructField("event_timestamp", LongType(), True),
-    StructField("referrer", StringType(), True),          # NEW COLUMN
-])
-
-df_events_batch3 = spark.createDataFrame(events_batch3, events_schema_v2)
-df_events_batch3.write.mode("overwrite").json(f"{raw_data_path}/json_events/batch3")
-print(f"Events Batch 3: {df_events_batch3.count()} events with NEW 'referrer' column written to S3")
-
-# COMMAND ----------
-
-# Auto Loader with schema evolution enabled
-# With schemaEvolutionMode="addNewColumns", the stream will:
-# 1. Detect the new 'referrer' column in batch 3
-# 2. Update the persisted schema at schemaLocation
-# 3. Add the column to the Delta table (mergeSchema=true)
-# 4. Old records retain NULL for the new column
-query_evolution = (
-    spark.readStream
-        .format("cloudFiles")
-        .option("cloudFiles.format", "json")
-        .option("cloudFiles.useManagedFileEvents", "true")
-        .option("cloudFiles.inferColumnTypes", "true")
-        .option("cloudFiles.schemaLocation", f"{schema_path}/managed_events")
-        .option("cloudFiles.schemaEvolutionMode", "addNewColumns")
-        .load(f"{raw_data_path}/json_events/")
-        .withColumn("load_time", current_timestamp())
-        .withColumn("source_file", col("_metadata.file_path"))
-        .withColumn("source_file_name", col("_metadata.file_name"))
-        .writeStream
-        .format("delta")
-        .option("checkpointLocation", f"{checkpoint_path}/managed_bronze")
-        .option("mergeSchema", "true")    # allow Delta table schema to evolve
-        .outputMode("append")
-        .trigger(availableNow=True)
-        .table("bronze_events_managed")
-)
-
-query_evolution.awaitTermination()
-print("Schema evolution stream completed")
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC -- Verify schema evolution: 'referrer' column should now exist
-# MAGIC DESCRIBE bronze_events_managed
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC -- Check the new column: batch 3 records have referrer values
-# MAGIC SELECT event_id, event_type, device, referrer, source_file_name
-# MAGIC FROM bronze_events_managed
-# MAGIC WHERE referrer IS NOT NULL
+# MAGIC SELECT order_id, order_date, first_name, last_name, city, tier,
+# MAGIC        product_id, quantity, amount, payment_method
+# MAGIC FROM silver_orders
+# MAGIC ORDER BY order_date DESC
 # MAGIC LIMIT 10
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC -- Verify: old records have NULL referrer, new records have values
-# MAGIC SELECT
-# MAGIC     CASE WHEN referrer IS NULL THEN 'No referrer (old schema)'
-# MAGIC          ELSE 'Has referrer (new schema)'
-# MAGIC     END as schema_version,
-# MAGIC     COUNT(*) as record_count
-# MAGIC FROM bronze_events_managed
-# MAGIC GROUP BY 1
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Rescue Column (`_rescued_data`)
-# MAGIC
-# MAGIC When `schemaEvolutionMode` is set to `rescue` (the default), data that doesn't match
-# MAGIC the expected schema is captured in the `_rescued_data` column instead of being dropped.
-# MAGIC
-# MAGIC ```python
-# MAGIC # Rescue mode (default behavior)
-# MAGIC spark.readStream
-# MAGIC     .format("cloudFiles")
-# MAGIC     .option("cloudFiles.format", "json")
-# MAGIC     .option("cloudFiles.schemaEvolutionMode", "rescue")  # default
-# MAGIC     .option("cloudFiles.schemaLocation", f"{schema_path}/rescue_demo")
-# MAGIC     .load(f"{raw_data_path}/json_events/")
-# MAGIC     # _rescued_data column is automatically added
-# MAGIC     # Contains JSON string of any data that doesn't match the schema
-# MAGIC ```
-# MAGIC
-# MAGIC **When to use each mode**:
-# MAGIC | Mode | Best For |
-# MAGIC |------|----------|
-# MAGIC | `addNewColumns` | When you want the Bronze table to automatically adapt |
-# MAGIC | `rescue` | When you want to preserve mismatched data without schema changes |
-# MAGIC | `failOnNewColumns` | When schema changes should halt the pipeline for review |
-# MAGIC | `none` | When extra columns should be silently dropped |
+# MAGIC -- Compare record counts across layers
+# MAGIC SELECT 'Source' as layer, COUNT(*) as records FROM source_orders
+# MAGIC UNION ALL
+# MAGIC SELECT 'Bronze' as layer, COUNT(*) as records FROM bronze_orders
+# MAGIC UNION ALL
+# MAGIC SELECT 'Silver' as layer, COUNT(*) as records FROM silver_orders
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ---
-# MAGIC ## Trigger Strategies Comparison
+# MAGIC ## Step 4: Streaming from Raw Files (Standard File Source)
 # MAGIC
-# MAGIC Different trigger modes for different use cases.
+# MAGIC Structured Streaming can read from raw files using the standard file source.
+# MAGIC This is the BASIC approach -- **not** Auto Loader.
+# MAGIC
+# MAGIC **Limitation**: Re-lists the entire directory on every trigger. Does not scale for millions of files.
+# MAGIC For production file ingestion, use **Auto Loader** (Day 20).
+
+# COMMAND ----------
+
+# Write sample data as Parquet files to S3
+df_file_data = spark.createDataFrame(orders_data[:20], orders_schema)
+df_file_data.write.mode("overwrite").parquet(f"{raw_files_path}/orders/batch1")
+print(f"Wrote {df_file_data.count()} records as Parquet files to S3")
+
+# COMMAND ----------
+
+# Standard file streaming (NOT Auto Loader)
+# NOTE: Schema MUST be provided for file sources (no schema inference)
+df_file_stream = (
+    spark.readStream
+        .format("parquet")
+        .schema(orders_schema)          # schema required!
+        .load(f"{raw_files_path}/orders/")
+        .withColumn("load_time", current_timestamp())
+)
+
+query_file = (
+    df_file_stream.writeStream
+        .format("delta")
+        .option("checkpointLocation", f"{checkpoint_path}/file_source_orders")
+        .outputMode("append")
+        .trigger(availableNow=True)
+        .table("file_source_orders")
+)
+
+query_file.awaitTermination()
+print("Standard file streaming completed")
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC SELECT * FROM file_source_orders LIMIT 10
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Standard File Source vs Auto Loader
+# MAGIC
+# MAGIC | Feature | Standard File Source | Auto Loader (Day 20) |
+# MAGIC |---------|---------------------|----------------------|
+# MAGIC | Format | `format("parquet")` | `format("cloudFiles")` |
+# MAGIC | Schema | Must provide manually | Auto-inferred and persisted |
+# MAGIC | File discovery | Lists entire directory every trigger | Optimized (notifications or incremental) |
+# MAGIC | Schema evolution | Not supported | Automatic |
+# MAGIC | Millions of files | Slow / fails | Handles well |
+# MAGIC | Rescue column | No | Yes (`_rescued_data`) |
+# MAGIC
+# MAGIC **For production file ingestion, always use Auto Loader (Day 20).**
+# MAGIC Standard file source is shown here to understand the Structured Streaming engine itself.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ---
+# MAGIC ## Step 5: Trigger Strategies
+# MAGIC
+# MAGIC Triggers control WHEN Structured Streaming processes data.
 
 # COMMAND ----------
 
@@ -809,20 +413,27 @@ print("Schema evolution stream completed")
 # MAGIC ### Trigger 1: `availableNow=True` (Recommended for Scheduled Jobs)
 # MAGIC
 # MAGIC Processes ALL available data in multiple micro-batches, then stops.
-# MAGIC Ideal for Databricks Workflows scheduled to run every N minutes/hours.
-# MAGIC This is what we've been using throughout this lab.
-# MAGIC
-# MAGIC ```python
-# MAGIC query = (
-# MAGIC     df_stream.writeStream
-# MAGIC         .format("delta")
-# MAGIC         .option("checkpointLocation", "s3://...")
-# MAGIC         .outputMode("append")
-# MAGIC         .trigger(availableNow=True)     # process all, then stop
-# MAGIC         .table("my_table")
-# MAGIC )
-# MAGIC query.awaitTermination()  # blocks until all data is processed
-# MAGIC ```
+# MAGIC This is what we have been using throughout this lab.
+
+# COMMAND ----------
+
+# availableNow: process all, then stop
+query_avail = (
+    spark.readStream
+        .format("delta")
+        .table("source_orders")
+        .filter(col("quantity") > 0)
+        .writeStream
+        .format("delta")
+        .option("checkpointLocation", f"{checkpoint_path}/trigger_demo_avail")
+        .outputMode("append")
+        .trigger(availableNow=True)
+        .table("trigger_demo_avail")
+)
+
+query_avail.awaitTermination()
+count_avail = spark.table("trigger_demo_avail").count()
+print(f"availableNow completed: {count_avail} records processed, stream stopped")
 
 # COMMAND ----------
 
@@ -830,211 +441,307 @@ print("Schema evolution stream completed")
 # MAGIC ### Trigger 2: `processingTime` (Continuous Near-Real-Time)
 # MAGIC
 # MAGIC Runs micro-batches at fixed intervals. The stream stays running indefinitely.
-# MAGIC
-# MAGIC ```python
-# MAGIC query = (
-# MAGIC     df_stream.writeStream
-# MAGIC         .format("delta")
-# MAGIC         .option("checkpointLocation", "s3://...")
-# MAGIC         .outputMode("append")
-# MAGIC         .trigger(processingTime="30 seconds")  # micro-batch every 30s
-# MAGIC         .table("my_table")
-# MAGIC )
-# MAGIC # Stream runs continuously -- stop with query.stop()
-# MAGIC ```
-# MAGIC
-# MAGIC **When to use**: Live dashboards, near-real-time ETL, event processing
+# MAGIC We start it, let it run for a few seconds, then stop it.
+
+# COMMAND ----------
+
+# processingTime: micro-batch every 10 seconds (runs continuously)
+query_continuous = (
+    spark.readStream
+        .format("delta")
+        .table("source_orders")
+        .filter(col("quantity") > 0)
+        .writeStream
+        .format("delta")
+        .option("checkpointLocation", f"{checkpoint_path}/trigger_demo_continuous")
+        .outputMode("append")
+        .trigger(processingTime="10 seconds")
+        .queryName("continuous_demo")
+        .table("trigger_demo_continuous")
+)
+
+# Let it run for 15 seconds to see at least one micro-batch
+print("Continuous stream started... waiting 15 seconds")
+time.sleep(15)
+
+# Check progress
+if query_continuous.lastProgress:
+    print(f"Last batch processed {query_continuous.lastProgress.get('numInputRows', 0)} rows")
+print(f"Stream status: {query_continuous.status}")
+
+# Stop the stream
+query_continuous.stop()
+query_continuous.awaitTermination()
+print("Continuous stream stopped")
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ### Trigger 3: `once=True` (Deprecated)
-# MAGIC
-# MAGIC Processes exactly ONE micro-batch then stops. **Deprecated** in favor of `availableNow`.
-# MAGIC
-# MAGIC Key difference: `once` processes a single micro-batch (may leave data behind),
-# MAGIC while `availableNow` processes ALL available data across multiple micro-batches.
-# MAGIC
-# MAGIC ```python
-# MAGIC # DEPRECATED - use availableNow instead
-# MAGIC query = (
-# MAGIC     df_stream.writeStream
-# MAGIC         .trigger(once=True)  # only one micro-batch
-# MAGIC         .table("my_table")
-# MAGIC )
-# MAGIC ```
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Trigger Comparison Summary
+# MAGIC ### Trigger Comparison
 # MAGIC
 # MAGIC | Trigger | Behavior | Stops? | Use Case |
 # MAGIC |---------|----------|--------|----------|
 # MAGIC | `availableNow=True` | All available data, multiple micro-batches | Yes | Scheduled Workflows |
 # MAGIC | `processingTime="30s"` | One micro-batch every 30 seconds | No | Continuous processing |
-# MAGIC | `processingTime="0s"` | ASAP, back-to-back micro-batches | No | Lowest latency |
-# MAGIC | `once=True` | Single micro-batch | Yes | **Deprecated** |
-# MAGIC | No trigger | ASAP (default) | No | Development/testing |
+# MAGIC | `processingTime="0s"` | ASAP, back-to-back | No | Lowest latency |
+# MAGIC | `once=True` | Single micro-batch | Yes | **Deprecated** (use `availableNow`) |
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ---
-# MAGIC ## Stream Monitoring
-
-# COMMAND ----------
-
-# List all currently active streaming queries
-active_streams = spark.streams.active
-print(f"Active streams: {len(active_streams)}")
-for stream in active_streams:
-    print(f"  Name: {stream.name}, ID: {stream.id}")
-    print(f"  Status: {stream.status}")
-    print(f"  Recent progress: {stream.recentProgress[-1] if stream.recentProgress else 'None'}")
-    print()
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ### Delta Table History
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC -- View ingestion history for the directory listing Bronze table
-# MAGIC DESCRIBE HISTORY bronze_orders_dir_listing
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC -- View ingestion history for the managed events Bronze table
-# MAGIC DESCRIBE HISTORY bronze_events_managed
-
-# COMMAND ----------
-
-# MAGIC %md
-# MAGIC ---
-# MAGIC ## Full Production Pipeline: Auto Loader -> Bronze -> Silver
+# MAGIC ## Step 6: Output Modes
 # MAGIC
-# MAGIC Putting it all together: stream from the directory listing Bronze table
-# MAGIC into a Silver table with transformations applied.
+# MAGIC Output modes control WHAT data is written to the sink.
 
 # COMMAND ----------
 
-# Read from Bronze as a stream
-df_bronze_stream = (
+# MAGIC %md
+# MAGIC ### Append Mode (default -- no aggregations)
+# MAGIC
+# MAGIC Only NEW rows are written. This is the most common mode for ETL pipelines.
+
+# COMMAND ----------
+
+# Append mode: each micro-batch adds only new rows
+query_append = (
     spark.readStream
         .format("delta")
-        .table("bronze_orders_dir_listing")
-)
-
-# Apply Silver transformations
-df_silver_stream = (
-    df_bronze_stream
-    .filter(col("quantity") > 0)
-    .filter(col("customer_id").isNotNull())
-    .dropDuplicates(["order_id"])
-    .withColumn(
-        "order_date",
-        from_unixtime(col("order_timestamp"), "yyyy-MM-dd HH:mm:ss").cast("timestamp")
-    )
-    .withColumn("order_date_str", date_format(
-        from_unixtime(col("order_timestamp")), "yyyy-MM-dd"
-    ))
-    .select(
-        "order_id", "customer_id", "product_id", "quantity",
-        "order_date", "order_date_str", "payment_method",
-        "load_time", "source_file"
-    )
-)
-
-# Write Silver table
-query_silver = (
-    df_silver_stream.writeStream
+        .table("source_orders")
+        .select("order_id", "customer_id", "quantity", "amount")
+        .writeStream
         .format("delta")
-        .option("checkpointLocation", f"{checkpoint_path}/silver_orders")
+        .option("checkpointLocation", f"{checkpoint_path}/output_mode_append")
         .outputMode("append")
         .trigger(availableNow=True)
-        .table("silver_orders_streaming")
+        .table("output_mode_append")
+)
+query_append.awaitTermination()
+
+count_append = spark.table("output_mode_append").count()
+print(f"Append mode: {count_append} rows written (all new rows)")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Complete Mode (aggregations -- full result rewritten)
+# MAGIC
+# MAGIC The ENTIRE result table is rewritten on each micro-batch.
+# MAGIC Required for aggregations without watermark.
+
+# COMMAND ----------
+
+# Complete mode: full aggregation result rewritten each trigger
+query_complete = (
+    spark.readStream
+        .format("delta")
+        .table("source_orders")
+        .groupBy("customer_id")
+        .agg(
+            count("order_id").alias("order_count"),
+            _sum("amount").alias("total_spent"),
+            _avg("amount").alias("avg_order_value")
+        )
+        .writeStream
+        .format("delta")
+        .option("checkpointLocation", f"{checkpoint_path}/output_mode_complete")
+        .outputMode("complete")       # full result rewritten
+        .trigger(availableNow=True)
+        .table("output_mode_complete")
+)
+query_complete.awaitTermination()
+print("Complete mode: aggregation result written")
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC -- Complete mode result: one row per customer with aggregates
+# MAGIC SELECT customer_id, order_count, ROUND(total_spent, 2) as total_spent,
+# MAGIC        ROUND(avg_order_value, 2) as avg_order_value
+# MAGIC FROM output_mode_complete
+# MAGIC ORDER BY total_spent DESC
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ---
+# MAGIC ## Step 7: Watermarking for Late Data
+# MAGIC
+# MAGIC Watermarking tells Structured Streaming how long to wait for late-arriving data
+# MAGIC before finalizing aggregation results. Without watermark, Spark keeps ALL state forever.
+
+# COMMAND ----------
+
+# Stream with watermark and window aggregation
+df_watermark_source = (
+    spark.readStream
+        .format("delta")
+        .table("source_orders")
+        .withColumn("order_date",
+            from_unixtime(col("event_ts"), "yyyy-MM-dd HH:mm:ss").cast("timestamp"))
 )
 
-query_silver.awaitTermination()
-print("Bronze -> Silver streaming pipeline completed")
+# Apply watermark: allow data up to 1 day late
+df_windowed = (
+    df_watermark_source
+    .withWatermark("order_date", "1 day")             # watermark threshold
+    .groupBy(
+        window("order_date", "1 day"),                 # 1-day tumbling window
+        "customer_id"
+    )
+    .agg(
+        count("order_id").alias("orders_in_window"),
+        _sum("amount").alias("window_total"),
+    )
+)
+
+query_watermark = (
+    df_windowed.writeStream
+        .format("delta")
+        .option("checkpointLocation", f"{checkpoint_path}/watermark_demo")
+        .outputMode("append")          # append works with watermark + window
+        .trigger(availableNow=True)
+        .table("watermark_demo")
+)
+
+query_watermark.awaitTermination()
+print("Watermark aggregation completed")
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC SELECT * FROM silver_orders_streaming ORDER BY order_date DESC LIMIT 10
-
-# COMMAND ----------
-
-# MAGIC %sql
-# MAGIC -- Verify record counts: Bronze vs Silver
-# MAGIC SELECT 'Bronze' as layer, COUNT(*) as records FROM bronze_orders_dir_listing
-# MAGIC UNION ALL
-# MAGIC SELECT 'Silver' as layer, COUNT(*) as records FROM silver_orders_streaming
+# MAGIC -- Windowed aggregation results
+# MAGIC SELECT window.start as window_start, window.end as window_end,
+# MAGIC        customer_id, orders_in_window, ROUND(window_total, 2) as window_total
+# MAGIC FROM watermark_demo
+# MAGIC ORDER BY window_start DESC, customer_id
+# MAGIC LIMIT 15
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ---
-# MAGIC ## Common Errors and Troubleshooting
+# MAGIC ### How Watermarking Works
 # MAGIC
-# MAGIC ### `PermanentRedirect` Error
-# MAGIC Your bucket region does not match. Set the correct AWS region:
-# MAGIC ```python
-# MAGIC .option("cloudFiles.region", "us-east-1")  # match your S3 bucket region
+# MAGIC ```
+# MAGIC Max event time seen: 2023-11-30 12:00:00
+# MAGIC Watermark threshold: 1 day
+# MAGIC Watermark boundary:  2023-11-29 12:00:00
+# MAGIC
+# MAGIC Data with event_time >= 2023-11-29 12:00:00  →  INCLUDED
+# MAGIC Data with event_time <  2023-11-29 12:00:00  →  MAY BE DROPPED
 # MAGIC ```
 # MAGIC
-# MAGIC ### `GetBucketNotification AccessDenied`
-# MAGIC The Databricks runtime role needs `s3:GetBucketNotification` permission.
-# MAGIC Add it to both the IAM role policy AND the S3 bucket policy.
+# MAGIC **Without watermark**: State grows forever (memory risk)
 # MAGIC
-# MAGIC ### Managed File Events: "no matching external location found"
-# MAGIC The S3 path is not inside a Unity Catalog external location with file events enabled.
-# MAGIC Create the storage credential, create the external location, and enable file events.
-# MAGIC
-# MAGIC ### Managed File Events: fails during `sns.subscribe`
-# MAGIC The external location was found, but Databricks could not finish SNS/SQS subscription.
-# MAGIC Check SNS and SQS permissions and inspect CloudTrail for the failing AWS API.
-# MAGIC
-# MAGIC ### CloudTrail shows `anonymous` identity with `AccessDenied`
-# MAGIC This does NOT mean public internet access. It means S3 did not recognize the request
-# MAGIC as an authorized principal. Re-check:
-# MAGIC - Which IAM role the Databricks runtime actually uses
-# MAGIC - The bucket policy principal ARN
-# MAGIC - Whether you are using classic notifications vs managed file events
+# MAGIC **With watermark**: Old state is discarded, memory stays bounded
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ---
-# MAGIC ## Auto Loader Mode Comparison
+# MAGIC ## Step 8: Stream Monitoring
+
+# COMMAND ----------
+
+# Check all active streaming queries
+active_streams = spark.streams.active
+print(f"Currently active streams: {len(active_streams)}")
+
+for stream in active_streams:
+    print(f"\n  Name: {stream.name}")
+    print(f"  ID: {stream.id}")
+    print(f"  Status: {stream.status}")
+    if stream.lastProgress:
+        progress = stream.lastProgress
+        print(f"  Input rows: {progress.get('numInputRows', 'N/A')}")
+        print(f"  Input rate: {progress.get('inputRowsPerSecond', 'N/A')} rows/sec")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Delta Table History (shows streaming writes)
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC DESCRIBE HISTORY bronze_orders
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC -- Time travel: see Bronze before incremental data was added
+# MAGIC SELECT COUNT(*) as records_v0 FROM bronze_orders VERSION AS OF 0
+# MAGIC UNION ALL
+# MAGIC SELECT COUNT(*) as records_current FROM bronze_orders
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ---
+# MAGIC ## Step 9: Structured Streaming vs Auto Loader
 # MAGIC
-# MAGIC | Feature | Directory Listing | Managed File Events | Classic Notifications |
-# MAGIC |---------|-------------------|--------------------|-----------------------|
-# MAGIC | **Option** | `useNotifications=false` | `useManagedFileEvents=true` | `useNotifications=true` |
-# MAGIC | **Setup** | None | External location + file events | IAM for SNS/SQS + bucket policy |
-# MAGIC | **Infrastructure** | None | Databricks-managed | Auto Loader-managed per stream |
-# MAGIC | **Latency** | Trigger interval | Near-real-time | Near-real-time |
-# MAGIC | **Scale** | Moderate (< 100K files) | Millions+ | Millions+ |
-# MAGIC | **Edition** | Free + Premium | Premium only | Free + Premium |
-# MAGIC | **Unity Catalog** | Optional | Required | Optional |
-# MAGIC | **Cleanup** | Nothing | Databricks manages | Must teardown SNS/SQS per stream |
-# MAGIC | **Recommendation** | Starter / Dev | Production | Legacy / Appendix |
+# MAGIC ### The Relationship
 # MAGIC
-# MAGIC ### Key Takeaways
+# MAGIC ```
+# MAGIC S3 / ADLS / GCS
+# MAGIC       |
+# MAGIC       v
+# MAGIC Auto Loader (cloudFiles)          <-- Specialized SOURCE (Day 20)
+# MAGIC       |
+# MAGIC       v
+# MAGIC Spark Structured Streaming        <-- ENGINE (this session)
+# MAGIC       |
+# MAGIC       v
+# MAGIC Transformations
+# MAGIC       |
+# MAGIC       v
+# MAGIC Delta Lake
+# MAGIC ```
 # MAGIC
-# MAGIC 1. **Start with directory listing** (`useNotifications=false`) -- it always works
-# MAGIC 2. **Graduate to managed file events** (`useManagedFileEvents=true`) for production
-# MAGIC 3. **Avoid classic notifications** as your main path -- more moving parts, more failure modes
-# MAGIC 4. Use `_metadata.file_path` and `_metadata.file_name` instead of `input_file_name()` in Unity Catalog
-# MAGIC 5. **Schema inference** is persisted to `schemaLocation` and only runs once
-# MAGIC 6. **Schema evolution** with `addNewColumns` automatically adapts to new fields
-# MAGIC 7. **`trigger(availableNow=True)`** is ideal for scheduled Workflows
-# MAGIC 8. **Checkpoints** enable exactly-once processing -- never share or delete them
-# MAGIC 9. Always set `cloudFiles.region` when using classic notifications
+# MAGIC | | Structured Streaming | Auto Loader |
+# MAGIC |---|---------------------|-------------|
+# MAGIC | **What** | Stream processing engine | File ingestion source |
+# MAGIC | **API** | `spark.readStream` / `writeStream` | `spark.readStream.format("cloudFiles")` |
+# MAGIC | **Handles** | Execution, checkpointing, state | File discovery, schema inference |
+# MAGIC | **Is a streaming engine?** | Yes | No -- uses Structured Streaming |
+# MAGIC
+# MAGIC ### Side-by-Side Code Comparison
+# MAGIC
+# MAGIC **Standard file source** (Structured Streaming only -- what we used in Step 4):
+# MAGIC ```python
+# MAGIC df = spark.readStream.format("parquet").schema(my_schema).load("/data")
+# MAGIC ```
+# MAGIC
+# MAGIC **Auto Loader** (Structured Streaming + optimized file discovery -- Day 20):
+# MAGIC ```python
+# MAGIC df = spark.readStream.format("cloudFiles").option("cloudFiles.format", "parquet").load("s3://bucket/data")
+# MAGIC ```
+# MAGIC
+# MAGIC Both use the same Structured Streaming engine underneath.
+# MAGIC Auto Loader adds optimized file discovery, schema inference, and schema evolution.
+# MAGIC
+# MAGIC **In Medallion Architecture**:
+# MAGIC - **Auto Loader** is typically used at the Bronze layer (S3 -> Bronze)
+# MAGIC - **Structured Streaming** from Delta is used for Silver and Gold (Bronze -> Silver -> Gold)
+# MAGIC
+# MAGIC See **Day 20: Auto Loader** for hands-on labs with `cloudFiles`.
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ---
+# MAGIC ## Summary
+# MAGIC
+# MAGIC | Concept | What We Learned |
+# MAGIC |---------|-----------------|
+# MAGIC | **Delta streaming** | `readStream.format("delta")` -- recommended source |
+# MAGIC | **File streaming** | `readStream.format("parquet")` -- basic, requires schema |
+# MAGIC | **Stream-static join** | Enrich streams with batch lookup tables |
+# MAGIC | **Triggers** | `availableNow` for scheduled, `processingTime` for continuous |
+# MAGIC | **Output modes** | `append` for ETL, `complete` for aggregations |
+# MAGIC | **Watermarking** | Bounds state, handles late data |
+# MAGIC | **Checkpoints** | Enable exactly-once, never share or delete |
+# MAGIC | **Auto Loader** | A SOURCE built on this ENGINE (Day 20) |
 
 # COMMAND ----------
 
@@ -1053,23 +760,21 @@ print("All streams stopped")
 
 # COMMAND ----------
 
-# Drop tables
+# Drop all tables
 tables = [
-    "bronze_orders_dir_listing",
-    "bronze_events_managed",
-    "bronze_orders_classic_notif",
-    "silver_orders_streaming",
+    "source_orders", "customers_lookup", "bronze_orders", "silver_orders",
+    "file_source_orders", "trigger_demo_avail", "trigger_demo_continuous",
+    "output_mode_append", "output_mode_complete", "watermark_demo"
 ]
-
 for table in tables:
     spark.sql(f"DROP TABLE IF EXISTS {table}")
-    print(f"Dropped table: {table}")
+    print(f"Dropped: {table}")
 
 # COMMAND ----------
 
 # Remove S3 data
 dbutils.fs.rm(base_path, recurse=True)
-print(f"Removed all data at: {base_path}")
+print(f"Removed: {base_path}")
 
 # COMMAND ----------
 
@@ -1082,8 +787,7 @@ print(f"Removed all data at: {base_path}")
 # MAGIC ---
 # MAGIC ## Next Steps
 # MAGIC
-# MAGIC - **Day 20**: [Advanced Streaming](../day20-advanced-streaming/) -- watermarks, windows, state management
-# MAGIC - Try converting Track A to continuous processing with `processingTime`
-# MAGIC - Set up Unity Catalog external location with file events for Track B
-# MAGIC - Build a complete Medallion pipeline: Auto Loader -> Bronze -> Silver -> Gold
-# MAGIC - Explore Delta Live Tables (DLT) for declarative streaming pipelines
+# MAGIC - **Day 20**: [Auto Loader](../day20-auto-loader/) -- the optimized file ingestion source built on Structured Streaming
+# MAGIC   - Three modes: directory listing, managed file events, classic notifications
+# MAGIC   - Schema inference and evolution
+# MAGIC   - IAM setup and troubleshooting for AWS

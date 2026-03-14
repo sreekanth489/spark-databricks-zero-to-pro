@@ -1,64 +1,56 @@
-# Day 19: Structured Streaming & Auto Loader
+# Day 19: Structured Streaming
 
 > Module: Data Engineering Pipelines | Level: Intermediate | Time: 90 min
 
 ## Learning Objectives
 
-- Understand Spark Structured Streaming fundamentals: sources, sinks, triggers, and checkpoints
-- Master Auto Loader (`cloudFiles`) for incremental file ingestion from AWS S3
-- Compare and implement three Auto Loader modes: **directory listing**, **managed file events**, and **classic notifications**
-- Build end-to-end streaming pipelines that feed into Medallion Architecture layers
-- Handle schema inference, evolution, and rescue columns in streaming workloads
-- Use triggers (`availableNow`, `processingTime`) to control micro-batch behavior
+- Understand Spark Structured Streaming as a stream processing engine
+- Distinguish Structured Streaming (the engine) from Auto Loader (a specialized source)
+- Stream data from Delta tables and file sources
+- Perform stream-static joins to enrich streaming data
+- Apply watermarking for late data handling
+- Compare trigger strategies and output modes
+- Monitor and manage streaming queries in production
 
 ## Key Concepts
 
-- **Structured Streaming** -- Spark's stream processing engine that treats a live data stream as a continuously appended table
-- **Auto Loader** (`cloudFiles`) -- Databricks-native streaming source that incrementally ingests new files from cloud storage
-- **Directory Listing Mode** -- Auto Loader polls the S3 directory to discover new files (zero setup, recommended starter)
-- **Managed File Events** -- Auto Loader uses Unity Catalog external locations with file events for near-real-time detection (recommended production)
-- **Classic File Notifications** -- Auto Loader auto-manages SNS/SQS per stream (legacy, more moving parts)
+- **Structured Streaming** -- Spark's stream processing engine that treats live data as a continuously appended unbounded table
+- **Micro-batch Execution** -- Structured Streaming processes data in small batches, each producing exactly-once results
 - **Checkpointing** -- persists streaming progress to S3 so pipelines can resume exactly where they left off
-- **Schema Inference & Evolution** -- Auto Loader can infer and adapt to schema changes in source files
-- **Trigger Modes** -- `availableNow` (process all pending then stop), `processingTime` (fixed intervals), continuous
-- **Rescue Column** (`_rescued_data`) -- captures data that does not match the expected schema
+- **Stream-Static Join** -- joining a streaming DataFrame with a static (batch) DataFrame for enrichment
+- **Watermarking** -- defines how long to wait for late-arriving data before finalizing aggregation results
+- **Trigger Modes** -- `availableNow` (process all then stop), `processingTime` (fixed intervals), continuous
+- **Output Modes** -- append (new rows only), complete (full result), update (changed rows only)
 
 ## Topics Covered
 
-- Structured Streaming architecture: input sources, query plans, output sinks
-- Auto Loader vs traditional `spark.readStream.format("parquet")`
-- Directory listing mode: polling-based file discovery (zero setup)
-- Managed file events: Unity Catalog external locations with file events (modern production)
-- Classic file notification mode: S3 -> SNS -> SQS -> Auto Loader (legacy)
-- IAM policies and bucket policies for notification modes
-- Common errors and troubleshooting (PermanentRedirect, AccessDenied, CloudTrail)
-- Schema inference with `cloudFiles.schemaLocation`
-- Schema evolution with `cloudFiles.schemaEvolutionMode`
-- Rescue column for handling unexpected data
-- Trigger strategies: `availableNow=True`, `processingTime="30 seconds"`, continuous
+- Structured Streaming architecture: unbounded table model
+- How Structured Streaming relates to Auto Loader (engine vs source)
+- Streaming from Delta tables (`readStream.format("delta")`)
+- Streaming from file sources (`readStream.format("parquet")`)
+- Stream-static joins for data enrichment
+- Trigger strategies: `availableNow`, `processingTime`, `once` (deprecated)
 - Output modes: append, complete, update
-- Checkpoint management and exactly-once processing
-- Stream monitoring with `spark.streams.active`
-- Integration with Medallion Architecture (Bronze layer ingestion)
-- Production best practices: error handling, idempotency, monitoring
+- Watermarking for late data and window aggregations
+- Checkpointing and exactly-once semantics
+- Stream monitoring: `spark.streams.active`, `lastProgress`, `status`
+- Graceful shutdown patterns
 
 ## Hands-On
 
-See the accompanying guide and notebook:
-
-- **Guide**: [`19-structured-streaming.md`](19-structured-streaming.md) -- theory, architecture diagrams, Auto Loader internals, and production patterns
-- **Notebook**: [`19-structured-streaming_notebook.py`](19-structured-streaming_notebook.py) -- runnable Databricks lab with three Auto Loader modes (directory listing, managed file events, classic notifications), schema evolution, and Bronze -> Silver pipeline
+- **Guide**: [`19-structured-streaming.md`](19-structured-streaming.md) -- theory, architecture, and production patterns
+- **Notebook**: [`19-structured-streaming_notebook.py`](19-structured-streaming_notebook.py) -- runnable Databricks lab covering Delta streaming, joins, triggers, watermarks, and monitoring
 
 ## Certification Tip
 
 The Databricks Certified Data Engineer Associate exam tests:
-- Difference between batch and streaming reads in Spark
-- Auto Loader configuration options (`cloudFiles.format`, `cloudFiles.schemaLocation`)
-- Understanding checkpoint directories and exactly-once guarantees
-- Trigger modes and when to use each
-- How Auto Loader handles schema evolution
-- Output modes (append vs complete vs update)
+- Difference between batch and streaming reads (`spark.read` vs `spark.readStream`)
+- Checkpoint directories and exactly-once guarantees
+- Trigger modes: `availableNow`, `processingTime`, `once` (deprecated)
+- Output modes: append, complete, update
+- Watermarking syntax and behavior
+- How Structured Streaming relates to Auto Loader
 
 ## Next Steps
 
-- [Day 20: Advanced Streaming](../day20-advanced-streaming/)
+- [Day 20: Auto Loader](../day20-auto-loader/) -- the optimized file ingestion source built on Structured Streaming
