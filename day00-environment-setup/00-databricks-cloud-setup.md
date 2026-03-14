@@ -77,17 +77,30 @@ If you're still on Day 01-17, start with the [Free Edition](00-databricks-free-s
 
 ---
 
-## Part 3: Create a Databricks Premium Workspace
+## Part 3: Create a Databricks Workspace
 
-### AWS
+### Option A: Databricks Free Edition (Quickest Start)
+
+If you don't have a Databricks account yet, start here:
+
+1. Go to [community.cloud.databricks.com](https://community.cloud.databricks.com/)
+2. Sign up with **Google**, **Microsoft**, or **email**
+3. You'll get a workspace with serverless compute -- no cluster setup needed
+4. This is enough for basic Spark and Delta Lake labs (Day 01-17)
+
+**To connect to your AWS/Azure storage**, you'll need to upgrade to Premium (Option B below). The Free Edition does not support external locations.
+
+### Option B: Databricks Premium Workspace (Required for Cloud Storage Labs)
+
+#### AWS
 
 1. Go to [databricks.com/try-databricks](https://www.databricks.com/try-databricks)
 2. Click **Start Free Trial**
 3. Select **AWS** as the cloud provider
 4. Follow the guided setup to link your AWS account
-5. The trial gives you 14 days of Premium features
+5. The trial gives you 14 days of Premium features (Unity Catalog, external locations, Auto Loader)
 
-### Azure
+#### Azure
 
 1. In the Azure Portal, search for **Azure Databricks**
 2. Click **Create**
@@ -96,6 +109,10 @@ If you're still on Day 01-17, start with the [Free Edition](00-databricks-free-s
 5. Pricing tier: **Premium** (required for Unity Catalog)
 6. Click **Review + Create** > **Create**
 7. Once deployed, click **Launch Workspace**
+
+> **Note**: If you already have a Free Edition account, you can upgrade by clicking
+> **"Get started for free"** on the Free Edition landing page to access the full
+> Data Intelligence Platform with a 14-day trial.
 
 ---
 
