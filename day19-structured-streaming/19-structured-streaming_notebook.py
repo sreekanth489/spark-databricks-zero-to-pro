@@ -32,7 +32,7 @@
 # MAGIC
 # MAGIC **Platform**: Databricks on AWS with Unity Catalog
 # MAGIC
-# MAGIC **Prerequisites**: See [Setup Guide](https://github.com/sreekanth489/spark-databricks-zero-to-pro/blob/main/docs/setup-databricks-aws.md) for AWS + Databricks + S3 configuration.
+# MAGIC **Prerequisites**: See [Day 00: Environment Setup](https://github.com/sreekanth489/spark-databricks-zero-to-pro/blob/main/day00-environment-setup/00-databricks-aws-setup.md) for AWS + Databricks + S3 configuration.
 
 # COMMAND ----------
 

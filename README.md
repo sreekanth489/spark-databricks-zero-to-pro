@@ -301,11 +301,11 @@ End-to-end lakehouse pipeline with RAG application built on Databricks. End-to-e
 
 ### 1. Set up a Databricks workspace
 
-**Option A: Community Edition** (free, no cloud account needed -- basic Spark labs only)
-See [docs/setup-community-edition.md](docs/setup-community-edition.md)
+**Option A: Databricks Free Edition** (free, sign up with Google/Microsoft/email)
+See [day00-environment-setup/00-databricks-free-setup.md](day00-environment-setup/00-databricks-free-setup.md)
 
 **Option B: Databricks on AWS with S3** (required for Medallion, Auto Loader, and streaming labs)
-See [docs/setup-databricks-aws.md](docs/setup-databricks-aws.md) -- covers AWS account, S3 bucket, external locations, Unity Catalog, and PAT token setup.
+See [day00-environment-setup/00-databricks-aws-setup.md](day00-environment-setup/00-databricks-aws-setup.md) -- covers AWS account, S3 bucket, external locations, Unity Catalog, and PAT token setup.
 
 ### 2. Import notebooks
 
