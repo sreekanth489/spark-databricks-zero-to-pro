@@ -18,15 +18,18 @@
 # MAGIC 7. Leverage Delta Lake features: time travel, history, constraints, OPTIMIZE
 # MAGIC
 # MAGIC **Architecture**:
+# MAGIC
+# MAGIC ![Medallion Architecture](images/medallion-architecture.png)
+# MAGIC
 # MAGIC ```
 # MAGIC Raw Files (S3)
 # MAGIC      |
 # MAGIC      v
 # MAGIC Bronze Layer (raw + metadata, append-only, immutable audit trail)
-# MAGIC      |
+# MAGIC      |  Clean
 # MAGIC      v
-# MAGIC Silver Layer (cleansed, deduplicated, joined, validated)
-# MAGIC      |
+# MAGIC Silver Layer (enrich, filter, deduplicate, validate)
+# MAGIC      |  Aggregate
 # MAGIC      v
 # MAGIC Gold Layer (business aggregations, star schema, KPI-ready)
 # MAGIC      |

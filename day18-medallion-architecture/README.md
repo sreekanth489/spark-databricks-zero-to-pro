@@ -2,6 +2,8 @@
 
 > Module: Data Engineering Pipelines | Level: Intermediate | Time: 90 min
 
+![Medallion Architecture: Bronze -> Silver -> Gold](images/medallion-architecture.png)
+
 ## Learning Objectives
 
 - Understand the Medallion (multi-hop) architecture pattern and why it matters for lakehouse data platforms
