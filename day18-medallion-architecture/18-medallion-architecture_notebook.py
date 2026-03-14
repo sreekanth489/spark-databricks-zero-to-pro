@@ -40,6 +40,9 @@
 # MAGIC ```
 # MAGIC
 # MAGIC **Platform**: Databricks on AWS with Unity Catalog
+# MAGIC
+# MAGIC **Prerequisites**: AWS account + Databricks workspace + S3 external location.
+# MAGIC See [Setup Guide](https://github.com/sreekanth489/spark-databricks-zero-to-pro/blob/main/docs/setup-databricks-aws.md) if you haven't configured these yet.
 
 # COMMAND ----------
 

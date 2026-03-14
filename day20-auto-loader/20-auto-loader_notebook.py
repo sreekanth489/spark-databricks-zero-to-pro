@@ -28,6 +28,8 @@
 # MAGIC | C | Classic Notifications | `useNotifications=true` | Legacy / Appendix |
 # MAGIC
 # MAGIC **Platform**: Databricks on AWS with Unity Catalog
+# MAGIC
+# MAGIC **Prerequisites**: See [Setup Guide](https://github.com/sreekanth489/spark-databricks-zero-to-pro/blob/main/docs/setup-databricks-aws.md) for AWS + Databricks + S3 + external location configuration.
 
 # COMMAND ----------
 
