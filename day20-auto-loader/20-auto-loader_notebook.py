@@ -83,6 +83,27 @@ print(f"Schemas:      {schema_path}")
 # MAGIC ---
 # MAGIC ## Why Auto Loader?
 # MAGIC
+# MAGIC ```
+# MAGIC ┌─────────────────────────────────────────────────────────────────┐
+# MAGIC │                     Auto Loader Pipeline                        │
+# MAGIC │                                                                 │
+# MAGIC │  ┌───────────┐    ┌──────────────────┐    ┌────────────────┐   │
+# MAGIC │  │  S3/ADLS   │    │  Auto Loader      │    │  Delta Lake    │   │
+# MAGIC │  │  Raw Files │───▶│  (cloudFiles)      │───▶│  Bronze Table  │   │
+# MAGIC │  │            │    │                    │    │                │   │
+# MAGIC │  │ batch1/    │    │ File Discovery:    │    │ Append-only    │   │
+# MAGIC │  │ batch2/    │    │  • Dir Listing     │    │ + metadata     │   │
+# MAGIC │  │ batch3/    │    │  • Managed Events  │    │ + source_file  │   │
+# MAGIC │  └───────────┘    │  • Classic Notif.  │    └────────────────┘   │
+# MAGIC │                    │                    │                         │
+# MAGIC │                    │ Schema:            │    ┌────────────────┐   │
+# MAGIC │                    │  • Auto-infer      │    │  Checkpoint    │   │
+# MAGIC │                    │  • Evolution       │    │  (exactly-once)│   │
+# MAGIC │                    │  • Rescue column   │    └────────────────┘   │
+# MAGIC │                    └──────────────────┘                         │
+# MAGIC └─────────────────────────────────────────────────────────────────┘
+# MAGIC ```
+# MAGIC
 # MAGIC Standard Spark file streaming (`format("parquet")`) has limitations:
 # MAGIC - Re-lists the entire directory on every trigger (expensive)
 # MAGIC - Struggles with millions of files

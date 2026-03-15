@@ -18,6 +18,27 @@
 # MAGIC 7. Apply watermarking for late data handling
 # MAGIC 8. Monitor and manage streaming queries
 # MAGIC
+# MAGIC **Structured Streaming Architecture**:
+# MAGIC ```
+# MAGIC ┌─────────────────────────────────────────────────────────────────────┐
+# MAGIC │                    Structured Streaming Engine                      │
+# MAGIC │                                                                     │
+# MAGIC │  ┌──────────────┐    ┌──────────────────┐    ┌──────────────────┐  │
+# MAGIC │  │   SOURCES     │    │   PROCESSING      │    │     SINKS        │  │
+# MAGIC │  │              │    │                    │    │                  │  │
+# MAGIC │  │ Delta Table  │───▶│  filter()          │───▶│  Delta Table     │  │
+# MAGIC │  │ File Source  │    │  join()            │    │  Parquet         │  │
+# MAGIC │  │ Kafka        │    │  groupBy().agg()   │    │  Kafka           │  │
+# MAGIC │  │ Auto Loader  │    │  withWatermark()   │    │  Console         │  │
+# MAGIC │  │ Rate Source  │    │  window()          │    │  Memory          │  │
+# MAGIC │  └──────────────┘    └──────────────────┘    └──────────────────┘  │
+# MAGIC │                                                                     │
+# MAGIC │  ┌──────────────────────────────────────────────────────────────┐   │
+# MAGIC │  │  Checkpointing (S3) ──── Exactly-once ──── Fault Tolerance   │   │
+# MAGIC │  └──────────────────────────────────────────────────────────────┘   │
+# MAGIC └─────────────────────────────────────────────────────────────────────┘
+# MAGIC ```
+# MAGIC
 # MAGIC **Key Distinction**:
 # MAGIC ```
 # MAGIC Structured Streaming = the streaming ENGINE
@@ -28,6 +49,13 @@
 # MAGIC   - Built ON TOP of Structured Streaming
 # MAGIC   - spark.readStream.format("cloudFiles")
 # MAGIC   - Optimized file discovery, schema inference, schema evolution
+# MAGIC ```
+# MAGIC
+# MAGIC **Micro-Batch Execution Model**:
+# MAGIC ```
+# MAGIC  Trigger fires ──▶ Read new data ──▶ Execute query ──▶ Write to sink ──▶ Commit checkpoint
+# MAGIC       │                                                                        │
+# MAGIC       └────────────────────────── Wait for next trigger ◀──────────────────────┘
 # MAGIC ```
 # MAGIC
 # MAGIC **Platform**: Databricks on AWS with Unity Catalog
@@ -221,6 +249,13 @@ print("Delta streaming to Bronze completed")
 # MAGIC ### Incremental: Add New Data to Source, Re-stream
 # MAGIC
 # MAGIC When new rows are added to the source Delta table, the stream picks up ONLY the new rows.
+# MAGIC
+# MAGIC **Important**: Since the source table was initially created with `mode("overwrite")` (a non-append commit),
+# MAGIC we need `.option("skipChangeCommits", "true")` on the `readStream`. Without this, Delta Streaming
+# MAGIC throws `DELTA_SOURCE_TABLE_IGNORE_CHANGES` because it detects the overwrite in the transaction log.
+# MAGIC
+# MAGIC `skipChangeCommits` tells Delta to skip non-append commits (overwrites, deletes) and only process
+# MAGIC actual data appends -- which is exactly what we want for incremental streaming.
 
 # COMMAND ----------
 
@@ -246,9 +281,11 @@ print(f"Added {df_new.count()} new orders to source table")
 # COMMAND ----------
 
 # Re-run stream with SAME checkpoint -- only processes new rows
+# skipChangeCommits=true skips the initial overwrite commit and processes only appends
 query_bronze_incr = (
     spark.readStream
         .format("delta")
+        .option("skipChangeCommits", "true")
         .table("source_orders")
         .filter(col("quantity") > 0)
         .withColumn("load_time", current_timestamp())
@@ -278,6 +315,26 @@ print("Incremental streaming completed -- only new rows processed")
 # MAGIC
 # MAGIC A very common pattern: join a **streaming** DataFrame with a **static** (batch) DataFrame.
 # MAGIC This is how you enrich streaming events with reference data (customer names, product details, etc.)
+# MAGIC
+# MAGIC ```
+# MAGIC ┌─────────────────────┐     ┌─────────────────────┐
+# MAGIC │  STREAMING SOURCE   │     │   STATIC TABLE      │
+# MAGIC │  (Bronze orders)    │     │   (Customers)       │
+# MAGIC │                     │     │                     │
+# MAGIC │  order_id           │     │  customer_id        │
+# MAGIC │  customer_id  ──────┼─JOIN┼──customer_id        │
+# MAGIC │  product_id         │     │  first_name         │
+# MAGIC │  quantity            │     │  last_name          │
+# MAGIC │  amount             │     │  city               │
+# MAGIC └─────────────────────┘     └─────────────────────┘
+# MAGIC              │
+# MAGIC              ▼
+# MAGIC ┌─────────────────────────────────┐
+# MAGIC │  ENRICHED OUTPUT (Silver)        │
+# MAGIC │  order_id + customer_id +        │
+# MAGIC │  first_name + last_name + city   │
+# MAGIC └─────────────────────────────────┘
+# MAGIC ```
 # MAGIC
 # MAGIC The static side is re-read on each micro-batch, so it always reflects the latest data.
 
@@ -423,6 +480,7 @@ print("Standard file streaming completed")
 query_avail = (
     spark.readStream
         .format("delta")
+        .option("skipChangeCommits", "true")
         .table("source_orders")
         .filter(col("quantity") > 0)
         .writeStream
@@ -451,6 +509,7 @@ print(f"availableNow completed: {count_avail} records processed, stream stopped"
 query_continuous = (
     spark.readStream
         .format("delta")
+        .option("skipChangeCommits", "true")
         .table("source_orders")
         .filter(col("quantity") > 0)
         .writeStream
@@ -509,6 +568,7 @@ print("Continuous stream stopped")
 query_append = (
     spark.readStream
         .format("delta")
+        .option("skipChangeCommits", "true")
         .table("source_orders")
         .select("order_id", "customer_id", "quantity", "amount")
         .writeStream
@@ -537,6 +597,7 @@ print(f"Append mode: {count_append} rows written (all new rows)")
 query_complete = (
     spark.readStream
         .format("delta")
+        .option("skipChangeCommits", "true")
         .table("source_orders")
         .groupBy("customer_id")
         .agg(
@@ -571,6 +632,26 @@ print("Complete mode: aggregation result written")
 # MAGIC
 # MAGIC Watermarking tells Structured Streaming how long to wait for late-arriving data
 # MAGIC before finalizing aggregation results. Without watermark, Spark keeps ALL state forever.
+# MAGIC
+# MAGIC ```
+# MAGIC Timeline ──────────────────────────────────────────────────▶
+# MAGIC
+# MAGIC  Events:   E1    E2    E3         E4(late)    E5    E6
+# MAGIC            │     │     │            │          │     │
+# MAGIC            ▼     ▼     ▼            ▼          ▼     ▼
+# MAGIC  Time:   10:00  10:05  10:10      10:02      10:15  10:20
+# MAGIC
+# MAGIC  Max event time seen: 10:20
+# MAGIC  Watermark (10 min):  10:10
+# MAGIC                         │
+# MAGIC            ◀─ INCLUDED ─┼─ DROPPED (too late) ─▶
+# MAGIC                         │
+# MAGIC  E4 arrived at 10:02 but max is 10:20
+# MAGIC  10:02 < watermark 10:10 → MAY BE DROPPED
+# MAGIC ```
+# MAGIC
+# MAGIC **Without watermark**: State grows unbounded (memory risk)
+# MAGIC **With watermark**: Old state is discarded, memory stays bounded
 
 # COMMAND ----------
 
@@ -578,6 +659,7 @@ print("Complete mode: aggregation result written")
 df_watermark_source = (
     spark.readStream
         .format("delta")
+        .option("skipChangeCommits", "true")
         .table("source_orders")
         .withColumn("order_date",
             from_unixtime(col("event_ts"), "yyyy-MM-dd HH:mm:ss").cast("timestamp"))

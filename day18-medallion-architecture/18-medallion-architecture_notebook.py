@@ -845,6 +845,34 @@ print("All Gold tables refreshed")
 
 # COMMAND ----------
 
+# MAGIC %md
+# MAGIC ### Z-ORDER: How It Organizes Data
+# MAGIC
+# MAGIC Z-ORDER co-locates related data in the same files based on specified columns,
+# MAGIC so queries that filter on those columns skip more files.
+# MAGIC
+# MAGIC ```
+# MAGIC BEFORE Z-ORDER (random distribution):
+# MAGIC ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+# MAGIC │   File 1      │  │   File 2      │  │   File 3      │  │   File 4      │
+# MAGIC │ C001, Nov-01  │  │ C003, Nov-15  │  │ C001, Nov-20  │  │ C005, Nov-01  │
+# MAGIC │ C004, Nov-10  │  │ C001, Nov-05  │  │ C007, Nov-03  │  │ C002, Nov-25  │
+# MAGIC │ C006, Nov-22  │  │ C005, Nov-18  │  │ C004, Nov-28  │  │ C008, Nov-12  │
+# MAGIC └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘
+# MAGIC   Query: WHERE customer_id = 'C001' → must scan ALL 4 files
+# MAGIC
+# MAGIC AFTER Z-ORDER BY (customer_id, order_date):
+# MAGIC ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+# MAGIC │   File 1      │  │   File 2      │  │   File 3      │  │   File 4      │
+# MAGIC │ C001, Nov-01  │  │ C003, Nov-15  │  │ C005, Nov-01  │  │ C007, Nov-03  │
+# MAGIC │ C001, Nov-05  │  │ C003, Nov-18  │  │ C005, Nov-18  │  │ C007, Nov-20  │
+# MAGIC │ C001, Nov-20  │  │ C004, Nov-10  │  │ C006, Nov-22  │  │ C008, Nov-12  │
+# MAGIC └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘
+# MAGIC   Query: WHERE customer_id = 'C001' → scans ONLY File 1 (data skipping!)
+# MAGIC ```
+
+# COMMAND ----------
+
 # MAGIC %sql
 # MAGIC OPTIMIZE silver.orders ZORDER BY (customer_id, order_date)
 
