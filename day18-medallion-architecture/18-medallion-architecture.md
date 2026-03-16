@@ -19,8 +19,10 @@ After completing this session, you will be able to:
 The **Medallion Architecture** (also called **multi-hop architecture**) is a data design pattern that logically organizes data in a lakehouse into multiple structured layers. Each layer represents a progressive step in refining raw data into high-quality, business-ready datasets.
 
 ![Medallion Architecture: Bronze -> Silver -> Gold](images/medallion-architecture.png)
+*Image credit: [Databricks](https://www.databricks.com/glossary/medallion-architecture)*
 
 ![Data Quality Levels: Ingest -> Bronze -> Silver -> Gold -> Consumers](images/medallion-data-quality.png)
+*Image credit: [Databricks / Delta Lake](https://www.databricks.com/glossary/medallion-architecture)*
 
 ```
    Raw Data Sources (Kafka, RDBMS, IoT, APIs, Files)

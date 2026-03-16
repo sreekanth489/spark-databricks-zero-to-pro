@@ -47,6 +47,7 @@ The key characteristic: **data keeps arriving**. There is no "end."
 ## Structured Streaming: The Engine
 
 ![Structured Streaming Architecture: Sources, Processing, Sinks, Checkpointing](images/structured-streaming-architecture.png)
+*Diagram by author*
 
 **Spark Structured Streaming is the streaming engine.**
 
@@ -576,6 +577,7 @@ This is the Medallion Architecture in motion.
 ## Where Each Tool Fits in Medallion Architecture
 
 ![Auto Loader in Medallion Architecture: recommended for Bronze layer ingestion](images/autoloader-medallion-pipeline.png)
+*Diagram by author*
 
 **Auto Loader** is the **recommended approach for Bronze layer ingestion** from cloud object storage (S3, ADLS, GCS). Databricks explicitly recommends it as the general best practice when ingesting data from cloud storage.
 

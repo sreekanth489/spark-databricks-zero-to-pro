@@ -3,6 +3,7 @@
 > Module: Data Engineering Pipelines | Level: Intermediate | Time: 90 min
 
 ![Medallion Architecture: Bronze -> Silver -> Gold](images/medallion-architecture.png)
+*Image credit: [Databricks](https://www.databricks.com/glossary/medallion-architecture)*
 
 ## Learning Objectives
 
