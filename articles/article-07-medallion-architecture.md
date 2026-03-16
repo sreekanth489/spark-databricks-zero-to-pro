@@ -23,7 +23,7 @@ That's where Medallion Architecture comes in.
 ## What Is Medallion Architecture?
 
 ![Medallion Architecture: Bronze, Silver, Gold layers with progressive data quality](images/medallion-architecture.png)
-*Image credit: [Databricks](https://www.databricks.com/glossary/medallion-architecture)*
+<p align="center"><em>Image credit: <a href="https://www.databricks.com/glossary/medallion-architecture">Databricks</a></em></p>
 
 Medallion Architecture is a data design pattern that organizes your lakehouse into three layers:
 
@@ -55,7 +55,7 @@ What happens?
 Separating data into layers solves all of these problems.
 
 ![Data quality improves as data flows through each layer](images/medallion-data-quality.png)
-*Image credit: [Databricks / Delta Lake](https://www.databricks.com/glossary/medallion-architecture)*
+<p align="center"><em>Image credit: <a href="https://www.databricks.com/glossary/medallion-architecture">Databricks / Delta Lake</a></em></p>
 
 ---
 
