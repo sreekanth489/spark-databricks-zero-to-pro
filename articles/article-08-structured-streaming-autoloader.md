@@ -46,6 +46,8 @@ The key characteristic: **data keeps arriving**. There is no "end."
 
 ## Structured Streaming: The Engine
 
+![Structured Streaming Architecture: Sources, Processing, Sinks, Checkpointing](images/structured-streaming-architecture.png)
+
 **Spark Structured Streaming is the streaming engine.**
 
 It takes the same DataFrame and SQL APIs you use for batch processing and applies them to continuously arriving data.
@@ -413,7 +415,9 @@ Same streaming engine underneath. But now you get:
 
 ---
 
-## Three Auto Loader Modes on AWS
+## Auto Loader File Detection Modes on AWS
+
+Databricks documents two file detection modes for Auto Loader, with the file notification mode having two variants in practice.
 
 ### Mode 1: Directory Listing — Start Here
 
@@ -428,15 +432,19 @@ spark.readStream
     .load(f"{raw_data_path}/json_events/")
 ```
 
-Auto Loader scans the directory, compares against its checkpoint, and processes only new files.
+Auto Loader lists the directory, compares against its checkpoint, and processes only new files.
 
 It works on both Free and Premium editions.
 
 Start here. It always works.
 
-### Mode 2: Managed File Events — Production
+### Mode 2: File Notification — Production
 
-The modern production path on Databricks Premium.
+File notification mode leverages cloud notification services to detect new files as they arrive, without scanning directories.
+
+On AWS, there are two approaches:
+
+**Managed File Events** (recommended for Databricks Premium with Unity Catalog):
 
 ```python
 spark.readStream
@@ -447,21 +455,11 @@ spark.readStream
     .load(f"{raw_data_path}/json_events/")
 ```
 
-Instead of scanning directories, Databricks listens for S3 file events.
+Databricks manages the S3 notification infrastructure via Unity Catalog external locations. You enable file events on your external location, and Databricks handles the SNS/SQS plumbing.
 
-When a new file lands, S3 sends a notification. Auto Loader picks it up in near-real-time.
+Requires: Unity Catalog external location with file events enabled.
 
-No directory listing. No scanning. Much more efficient at scale.
-
-But it requires:
-
-1. A Unity Catalog external location
-2. File events enabled on that location
-3. The right IAM permissions
-
-### Mode 3: Classic Notifications — Legacy
-
-The older approach where Auto Loader auto-manages SNS/SQS per stream.
+**Classic Notifications** (legacy approach):
 
 ```python
 spark.readStream
@@ -473,7 +471,15 @@ spark.readStream
     .load(f"{raw_data_path}/json_events/")
 ```
 
-More moving parts. More failure modes. Use Managed File Events instead when possible.
+Auto Loader auto-manages SNS/SQS resources per stream. More moving parts, more failure modes. Use managed file events instead when possible.
+
+### Which to Use?
+
+| Approach | Setup | Scale | Best For |
+|----------|-------|-------|----------|
+| Directory listing | None | Moderate | Dev, learning, scheduled batch |
+| Managed file events | External location + file events | Millions+ | Production (Premium) |
+| Classic notifications | IAM for SNS/SQS | Millions+ | Legacy setups |
 
 ---
 
@@ -505,7 +511,7 @@ What actually happens internally:
 
 In production, you configure **retries** in your Databricks Workflow. The first attempt detects the change, the second attempt processes it.
 
-The default `schemaEvolutionMode` is `addNewColumns`. Other options include `rescue` (captures unknown fields in a `_rescued_data` column) and `failOnNewColumns` (halts the stream for manual review).
+The default `schemaEvolutionMode` is `addNewColumns` when no schema is provided (Auto Loader infers it). If you explicitly provide a schema, the default changes to `none`. Other options include `rescue` (captures unknown fields in a `_rescued_data` column) and `failOnNewColumns` (halts the stream for manual review).
 
 ### Auto Loader Schema Location
 
@@ -569,26 +575,24 @@ This is the Medallion Architecture in motion.
 
 ## Where Each Tool Fits in Medallion Architecture
 
-```
-S3 Raw Files
-      |
-      v
-Auto Loader (cloudFiles)      ← Bronze layer ingestion
-      |
-      v
-Bronze Table
-      |
-      v
-Structured Streaming           ← Silver and Gold transformations
-(readStream from Delta)
-      |
-      v
-Silver → Gold
-```
+![Auto Loader in Medallion Architecture: recommended for Bronze layer ingestion](images/autoloader-medallion-pipeline.png)
 
-**Auto Loader** is typically used only at the **Bronze layer** — for ingesting raw files from cloud storage.
+**Auto Loader** is the **recommended approach for Bronze layer ingestion** from cloud object storage (S3, ADLS, GCS). Databricks explicitly recommends it as the general best practice when ingesting data from cloud storage.
 
-**Structured Streaming** from Delta tables is used for **Silver and Gold** — reading from one Delta table and writing to the next.
+Why Auto Loader specifically for Bronze?
+
+- Bronze receives raw files from external systems — exactly what Auto Loader is designed for
+- Auto Loader handles schema inference and evolution, which is critical at the ingestion layer where source schemas may change
+- File notification mode provides near-real-time detection of new files landing in S3
+- Incremental tracking via checkpoints ensures exactly-once processing without re-scanning
+
+**Structured Streaming** from Delta tables is used for **Silver and Gold** — reading from one Delta table and writing to the next. At these layers, data is already in Delta format, so you don't need Auto Loader's file discovery capabilities. A simple `spark.readStream.table("bronze.orders")` is sufficient.
+
+| Layer | Recommended Ingestion Method | Why |
+|-------|------------------------------|-----|
+| **Bronze** | **Auto Loader** (`cloudFiles`) | Raw files from cloud storage; needs schema inference, file tracking |
+| **Silver** | Structured Streaming from Delta | Data already in Delta; just needs `readStream.table()` |
+| **Gold** | Structured Streaming from Delta or Batch | Aggregations from Silver; can use `readStream` or `spark.read` |
 
 ---
 

@@ -22,6 +22,8 @@ That's where Medallion Architecture comes in.
 
 ## What Is Medallion Architecture?
 
+![Medallion Architecture: Bronze, Silver, Gold layers with progressive data quality](images/medallion-architecture.png)
+
 Medallion Architecture is a data design pattern that organizes your lakehouse into three layers:
 
 **Bronze** — raw data, as-is from source
@@ -50,6 +52,8 @@ What happens?
 - Data quality is invisible. You can't measure how much data was filtered or enriched at each stage.
 
 Separating data into layers solves all of these problems.
+
+![Data quality improves as data flows through each layer](images/medallion-data-quality.png)
 
 ---
 
@@ -82,6 +86,16 @@ Because if something goes wrong downstream — a bad join, a wrong filter, a dat
 If you overwrite Bronze, you lose that safety net.
 
 And since cloud storage is cheap, there's no reason not to keep every raw record.
+
+### How to Ingest into Bronze
+
+For batch ingestion: `spark.read` + `df.write.mode("append")`
+
+For production ingestion from cloud storage: **Auto Loader** (`cloudFiles`).
+
+Databricks recommends Auto Loader as the **best practice for Bronze layer ingestion**. It provides incremental file tracking, schema inference, and schema evolution — all the things you need when ingesting raw files from S3 or ADLS.
+
+Auto Loader is covered in detail in the [next article](#) on Structured Streaming.
 
 ### Who uses Bronze?
 
