@@ -29,13 +29,34 @@ In this article, I'll cover:
 
 ---
 
-## Structured Streaming: The Engine
+## What Is a Data Stream?
 
-Let's start with the most important concept.
+Before we get into the engine, let's define the input.
+
+A data stream is any data source that grows over time:
+
+- New JSON files landing in S3
+- Database changes captured via CDC (Change Data Capture)
+- Events queued in Kafka or Kinesis
+- IoT sensor readings arriving every second
+
+The key characteristic: **data keeps arriving**. There is no "end."
+
+---
+
+## Structured Streaming: The Engine
 
 **Spark Structured Streaming is the streaming engine.**
 
 It takes the same DataFrame and SQL APIs you use for batch processing and applies them to continuously arriving data.
+
+The magic behind Structured Streaming is simple:
+
+It treats an ever-growing data source as if it were a static table of records.
+
+New data in the stream is just **new rows appended to a table**.
+
+That table is called an **unbounded table** — it has no fixed end.
 
 The key mental model:
 
@@ -124,6 +145,73 @@ Never share a checkpoint between different streams.
 
 Never delete a checkpoint unless you want to reprocess everything from scratch.
 
+### Exactly-Once Guarantees
+
+Structured Streaming provides two important guarantees:
+
+1. **Fault tolerance**: If the job crashes, it resumes from where it left off. This works because of checkpointing and a mechanism called **write-ahead logs** that record the offset range of data being processed during each trigger.
+
+2. **Exactly-once processing**: Streaming sinks are designed to be **idempotent**. Multiple writes of the same data (identified by offset) do not result in duplicates.
+
+These guarantees work when the streaming source is **repeatable** (cloud storage, Kafka) and the sink is **idempotent** (Delta Lake).
+
+Repeatable sources + idempotent sinks = end-to-end exactly-once semantics.
+
+---
+
+## Unsupported Operations
+
+Most operations on a streaming DataFrame are identical to a static DataFrame.
+
+But there are exceptions.
+
+**Sorting** is not supported on streaming DataFrames:
+
+```python
+# This will fail on a streaming DataFrame
+df_stream.orderBy("timestamp")
+# AnalysisException: sorting is not supported on streaming DataFrames
+```
+
+Why? Because you can't sort an infinite dataset — new rows keep arriving.
+
+**Deduplication** across the entire stream is also complex without watermarking.
+
+For operations like these, you need advanced streaming methods like **windowing** and **watermarking**, which we cover later in this article.
+
+---
+
+## Streaming with SQL: Temporary Views
+
+You can use SQL with streaming data by registering a streaming temporary view:
+
+```python
+spark.readStream.table("books").createOrReplaceTempView("books_streaming_tmp_vw")
+```
+
+Now you can write SQL against it:
+
+```sql
+SELECT author, count(book_id) AS total_books
+FROM books_streaming_tmp_vw
+GROUP BY author
+```
+
+This is a streaming query — it runs continuously, updating as new data arrives.
+
+To persist the results, pass the logic back to PySpark and use `writeStream`:
+
+```python
+spark.table("author_counts_tmp_vw")
+    .writeStream
+    .trigger(availableNow=True)
+    .outputMode("complete")
+    .option("checkpointLocation", "/path/to/checkpoint")
+    .table("author_counts")
+```
+
+**Important**: Spark always loads streaming views as streaming DataFrames. Incremental processing must be defined from the beginning with `readStream` to support incremental writing later.
+
 ---
 
 ## Trigger Strategies
@@ -197,6 +285,67 @@ df_windowed = (
 ```
 
 This keeps memory bounded while still handling reasonable late arrivals.
+
+---
+
+## A Note on `skipChangeCommits`
+
+When streaming from a Delta table that was initially created with `mode("overwrite")`, you may encounter:
+
+```
+DELTA_SOURCE_TABLE_IGNORE_CHANGES
+```
+
+This happens because the streaming checkpoint detects a non-append commit (the overwrite) in the transaction log.
+
+The fix:
+
+```python
+spark.readStream
+    .format("delta")
+    .option("skipChangeCommits", "true")
+    .table("source_orders")
+```
+
+`skipChangeCommits` tells Delta to skip non-append commits (overwrites, deletes) and only process actual data appends.
+
+In production Bronze tables that are always append-only, you won't hit this. But in development where you might overwrite a source table, this option saves you.
+
+---
+
+## Incremental Data Ingestion from Files
+
+Before we get to Auto Loader, it's worth knowing that Databricks provides **two mechanisms** for incrementally processing new data files:
+
+### COPY INTO
+
+A SQL command that loads data idempotently from a file location into a Delta table:
+
+```sql
+COPY INTO my_table
+FROM '/path/to/files'
+FILEFORMAT = CSV
+FORMAT_OPTIONS('delimiter' = '|', 'header' = 'true')
+COPY_OPTIONS('mergeSchema' = 'true');
+```
+
+Each time you run it, it loads **only new files**. Previously loaded files are skipped.
+
+### Auto Loader
+
+Uses Structured Streaming to efficiently process new data files as they arrive.
+
+### When to Use Which?
+
+| Scenario | Use |
+|----------|-----|
+| Thousands of files | COPY INTO |
+| Millions of files or more | Auto Loader |
+| Need schema evolution | Auto Loader |
+| Need near-real-time | Auto Loader |
+| Simple one-time loads | COPY INTO |
+
+Databricks recommends **Auto Loader as the general best practice** for ingesting data from cloud object storage.
 
 ---
 
@@ -346,6 +495,75 @@ In the lab, I demonstrated this:
 4. Old records got `NULL` for `referrer`. New records got the actual values.
 
 No code changes. No manual intervention. The pipeline just adapts.
+
+What actually happens internally:
+
+1. Auto Loader detects the new column in the incoming data
+2. It throws an `UnknownFieldException` to signal the schema change
+3. It updates the schema file at `schemaLocation` with the new column
+4. On retry (or next trigger), the stream succeeds with the updated schema
+
+In production, you configure **retries** in your Databricks Workflow. The first attempt detects the change, the second attempt processes it.
+
+The default `schemaEvolutionMode` is `addNewColumns`. Other options include `rescue` (captures unknown fields in a `_rescued_data` column) and `failOnNewColumns` (halts the stream for manual review).
+
+### Auto Loader Schema Location
+
+Auto Loader can automatically infer the schema of your data. To avoid inference costs on every restart, the inferred schema is persisted:
+
+```python
+.option("cloudFiles.schemaLocation", "s3://bucket/checkpoints/schema")
+```
+
+This location can be the same as your checkpoint location. The schema is inferred once from the first batch of files and reused on every subsequent run.
+
+---
+
+## Streaming Multi-Hop Pipeline
+
+The real power of combining Structured Streaming with Auto Loader is the **multi-hop streaming pipeline** — data flows continuously from Bronze through Silver to Gold.
+
+```python
+# BRONZE: Auto Loader ingests raw files
+spark.readStream
+    .format("cloudFiles")
+    .option("cloudFiles.format", "parquet")
+    .option("cloudFiles.schemaLocation", "s3://bucket/schema/orders")
+    .load("s3://bucket/raw/orders/")
+    .writeStream
+    .option("checkpointLocation", "s3://bucket/checkpoints/bronze")
+    .outputMode("append")
+    .table("bronze.orders")
+
+# SILVER: Stream from Bronze, join with lookup, write enriched data
+spark.readStream
+    .table("bronze.orders")
+    .join(spark.table("silver.customers"), "customer_id", "inner")
+    .filter(col("quantity") > 0)
+    .writeStream
+    .option("checkpointLocation", "s3://bucket/checkpoints/silver")
+    .outputMode("append")
+    .table("silver.orders")
+
+# GOLD: Stream from Silver, aggregate, write business metrics
+spark.readStream
+    .table("silver.orders")
+    .groupBy(date_trunc("day", col("order_date")), "customer_id")
+    .agg(sum("quantity").alias("daily_items"))
+    .writeStream
+    .option("checkpointLocation", "s3://bucket/checkpoints/gold")
+    .outputMode("complete")
+    .trigger(availableNow=True)
+    .table("gold.daily_customer_orders")
+```
+
+Each layer reads as a stream from the previous layer.
+
+When new files land in S3, Auto Loader detects them and writes to Bronze. The Silver stream picks up the new Bronze records, enriches them, and writes to Silver. The Gold stream picks up the new Silver records, aggregates them, and refreshes Gold.
+
+The entire pipeline can be automated with Databricks Workflows — one trigger starts the chain.
+
+This is the Medallion Architecture in motion.
 
 ---
 

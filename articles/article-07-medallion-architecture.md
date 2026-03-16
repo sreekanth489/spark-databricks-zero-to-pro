@@ -275,6 +275,21 @@ If you want the full internals of how Z-ORDER and data skipping work at the file
 
 ---
 
+## Benefits of Medallion Architecture
+
+Why does this pattern work so well?
+
+- **Simple data model** — easy to understand and implement. Three layers, three purposes.
+- **Incremental ETL** — each layer processes only new or changed data, not the full dataset.
+- **Mix streaming and batch** — each layer can independently be batch or streaming. Bronze can use Auto Loader while Gold uses scheduled batch.
+- **Reprocessing from raw data** — since Bronze preserves everything, you can recreate Silver and Gold at any time.
+- **Data governance** — separate schemas with separate access controls. Business users see Gold. Engineers see Bronze.
+- **Debugging** — if Gold numbers look wrong, trace back through Silver to Bronze. The audit trail is built in.
+
+And because every layer is Delta Lake, you get ACID transactions, time travel, and schema enforcement at every step.
+
+---
+
 ## Time Travel Across Layers
 
 Because every layer is Delta, you get time travel for free:
