@@ -1,0 +1,9 @@
+store_id,store_name,city,region
+NE01,Boston Market,Boston,Northeast
+NE02,NYC Central,New York,Northeast
+SE01,Atlanta Hub,Atlanta,Southeast
+SE02,Miami Plaza,Miami,Southeast
+MW01,Chicago Center,Chicago,Midwest
+MW02,Detroit Square,Detroit,Midwest
+WE01,LA Express,Los Angeles,West
+WE02,Seattle Point,Seattle,West
