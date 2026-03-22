@@ -21,53 +21,61 @@ Lakeflow Connect is the **ingestion layer** of the Databricks Lakeflow ecosystem
 
 Lakeflow has three components that form a complete data engineering platform:
 
-![Lakeflow Ecosystem: Connect → Spark Declarative Pipelines → Jobs](images/lakeflow-ecosystem.excalidraw.png)
+```
+                    ┌──────────────────────────────────────────────────────────────┐
+                    │                   LAKEFLOW  PLATFORM                         │
+                    │                                                              │
+                    │   ┌────────────┐      ┌───────────────────┐    ┌──────────┐  │
+                    │   │  CONNECT   │ ───> │ SPARK DECLARATIVE │ ──>│   JOBS   │  │
+                    │   │  (Ingest)  │      │    PIPELINES      │    │(Orchestr)│  │
+                    │   │   Day 22   │      │   (Transform)     │    │  Day 24  │  │
+                    │   │            │      │    Day 23         │    │          │  │
+                    │   └────────────┘      └───────────────────┘    └──────────┘  │
+                    │                                                              │
+                    │  External Sources      Bronze → Silver        Scheduling     │
+                    │  → Bronze Tables       → Gold Tables          & Monitoring   │
+                    └──────────────────────────────────────────────────────────────┘
+```
 
 - **Lakeflow Connect** (this session): Brings data INTO the Lakehouse from external sources
 - **Spark Declarative Pipelines** (Day 23): Transforms data through the Medallion layers
 - **Lakeflow Jobs** (Day 24): Orchestrates pipelines, connectors, and notebooks on a schedule
 
-> The Excalidraw source file is available at [`images/lakeflow-ecosystem.excalidraw`](images/lakeflow-ecosystem.excalidraw) for editing.
-
 ---
 
 ## Architecture Overview
 
-![Lakeflow Connect Architecture: Sources → Connectors → Lakehouse](images/lakeflow-connect-architecture.excalidraw.png)
-
-> The Excalidraw source file is available at [`images/lakeflow-connect-architecture.excalidraw`](images/lakeflow-connect-architecture.excalidraw) for editing.
-
 ```
-  External Sources                 Lakeflow Connect                    Lakehouse
-  ════════════════         ═══════════════════════════════       ═══════════════════
+  External Sources               Lakeflow Connect                     Lakehouse
+  ═══════════════        ════════════════════════════════       ═══════════════════
 
-  ┌─────────────┐          ┌────────────────────────────┐       ┌─────────────────┐
-  │ Cloud Storage│─────────>│  Standard Connectors       │──────>│                 │
-  │ (S3/ADLS/GCS)│         │  - Auto Loader (cloudFiles)│       │  Unity Catalog  │
-  └─────────────┘          │  - Batch (spark.read)      │       │                 │
-                           │  - Streaming (readStream)  │       │  ┌───────────┐  │
-  ┌─────────────┐          └────────────────────────────┘       │  │  Bronze   │  │
-  │   Kafka     │─────────>│  Standard Connectors       │──────>│  │  Tables   │  │
-  │   Topics    │          │  - Kafka Connector          │       │  └───────────┘  │
-  └─────────────┘          └────────────────────────────┘       │                 │
-                                                                │  ┌───────────┐  │
-  ┌─────────────┐          ┌────────────────────────────┐       │  │ Streaming │  │
-  │  Databases  │─────────>│  Managed Connectors        │──────>│  │  Tables   │  │
-  │ (PostgreSQL,│          │  - No-code UI setup        │       │  └───────────┘  │
-  │  MySQL,     │          │  - CDC-based incremental   │       │                 │
-  │  Oracle)    │          │  - Serverless compute      │       │  ┌───────────┐  │
-  └─────────────┘          └────────────────────────────┘       │  │  Volumes  │  │
-                                                                │  └───────────┘  │
-  ┌─────────────┐          ┌────────────────────────────┐       │                 │
-  │  SaaS Apps  │─────────>│  Managed Connectors        │──────>│                 │
-  │ (Salesforce,│          │  - Workday, ServiceNow     │       │                 │
-  │  Workday)   │          │  - Schema auto-inference   │       └─────────────────┘
-  └─────────────┘          └────────────────────────────┘
+  ┌──────────────┐       ┌──────────────────────────────┐      ┌─────────────────┐
+  │ Cloud Storage│──────> │  Standard Connectors         │ ───> │                 │
+  │(S3/ADLS/GCS) │       │  • Auto Loader (cloudFiles)  │      │  Unity Catalog  │
+  └──────────────┘       │  • Batch (spark.read)        │      │                 │
+                         │  • Streaming (readStream)    │      │  ┌───────────┐  │
+  ┌──────────────┐       └──────────────────────────────┘      │  │  Bronze   │  │
+  │    Kafka     │──────> │  Standard Connectors         │ ───> │  │  Tables   │  │
+  │    Topics    │       │  • Kafka Connector            │      │  └───────────┘  │
+  └──────────────┘       └──────────────────────────────┘      │                 │
+                                                               │  ┌───────────┐  │
+  ┌──────────────┐       ┌──────────────────────────────┐      │  │ Streaming │  │
+  │  Databases   │──────> │  Managed Connectors          │ ───> │  │  Tables   │  │
+  │ (PostgreSQL, │       │  • No-code UI setup           │      │  └───────────┘  │
+  │  MySQL,      │       │  • CDC-based incremental      │      │                 │
+  │  Oracle)     │       │  • Serverless compute         │      │  ┌───────────┐  │
+  └──────────────┘       └──────────────────────────────┘      │  │  Volumes  │  │
+                                                               │  └───────────┘  │
+  ┌──────────────┐       ┌──────────────────────────────┐      │                 │
+  │  SaaS Apps   │──────> │  Managed Connectors          │ ───> │                 │
+  │ (Salesforce, │       │  • Workday, ServiceNow       │      │                 │
+  │  Workday)    │       │  • Schema auto-inference     │      └─────────────────┘
+  └──────────────┘       └──────────────────────────────┘
 
-  ┌─────────────┐          ┌────────────────────────────┐
-  │ Local Files │─────────>│  Manual File Upload        │──────> Volume or Table
-  │ (CSV, JSON) │          │  - Databricks UI           │
-  └─────────────┘          └────────────────────────────┘
+  ┌──────────────┐       ┌──────────────────────────────┐
+  │ Local Files  │──────> │  Manual File Upload          │ ───> Volume or Table
+  │ (CSV, JSON)  │       │  • Databricks UI             │
+  └──────────────┘       └──────────────────────────────┘
 ```
 
 ---

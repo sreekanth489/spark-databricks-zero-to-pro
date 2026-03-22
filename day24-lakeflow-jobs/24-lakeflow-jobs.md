@@ -22,9 +22,21 @@ After completing this session, you will be able to:
 
 Lakeflow is Databricks' unified platform for data engineering. It has three components, each handling a distinct phase of the data lifecycle:
 
-![Lakeflow Ecosystem: Connect → Spark Declarative Pipelines → Jobs](images/lakeflow-ecosystem.excalidraw.png)
-
-> The Excalidraw source file is available at [`images/lakeflow-ecosystem.excalidraw`](images/lakeflow-ecosystem.excalidraw) for editing.
+```
+┌──────────────────────────────────────────────────────────────┐
+│                   LAKEFLOW  PLATFORM                         │
+│                                                              │
+│   ┌────────────┐      ┌───────────────────┐    ┌──────────┐ │
+│   │  CONNECT   │ ───> │ SPARK DECLARATIVE │ ──>│   JOBS   │ │
+│   │  (Ingest)  │      │    PIPELINES      │    │(Orchestr)│ │
+│   │   Day 22   │      │   (Transform)     │    │  Day 24  │ │
+│   │            │      │    Day 23         │    │          │ │
+│   └────────────┘      └───────────────────┘    └──────────┘ │
+│                                                              │
+│  External Sources      Bronze → Silver        Scheduling     │
+│  → Bronze Tables       → Gold Tables          & Monitoring   │
+└──────────────────────────────────────────────────────────────┘
+```
 
 | Component | Day | Role |
 |-----------|-----|------|
