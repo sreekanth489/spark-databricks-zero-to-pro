@@ -22,25 +22,15 @@ After completing this session, you will be able to:
 
 Lakeflow is Databricks' unified platform for data engineering. It has three components, each handling a distinct phase of the data lifecycle:
 
-```
-+---------------------------------------------------------------------+
-|                        LAKEFLOW PLATFORM                            |
-+---------------------------------------------------------------------+
-|                                                                     |
-|  1. LAKEFLOW CONNECT          2. SPARK DECLARATIVE     3. LAKEFLOW  |
-|     (Day 22)                     PIPELINES (Day 24)       JOBS      |
-|                                                           (Day 25)  |
-|  +-------------------+    +---------------------+    +-----------+  |
-|  | Ingest data from  |    | Transform data with |    | Orchest-  |  |
-|  | external sources  |--->| declarative queries |--->| rate the  |  |
-|  | (databases, SaaS, |    | (Bronze -> Silver   |    | entire    |  |
-|  |  files, APIs)     |    |  -> Gold layers)    |    | workflow  |  |
-|  +-------------------+    +---------------------+    +-----------+  |
-|                                                                     |
-|  "Get the data in"        "Make the data right"     "Run it all     |
-|                                                      reliably"      |
-+---------------------------------------------------------------------+
-```
+![Lakeflow Ecosystem: Connect → Spark Declarative Pipelines → Jobs](images/lakeflow-ecosystem.excalidraw.png)
+
+> The Excalidraw source file is available at [`images/lakeflow-ecosystem.excalidraw`](images/lakeflow-ecosystem.excalidraw) for editing.
+
+| Component | Day | Role |
+|-----------|-----|------|
+| **Lakeflow Connect** | Day 22 | "Get the data in" -- ingest from databases, SaaS, files, APIs |
+| **Spark Declarative Pipelines** | Day 23 | "Make the data right" -- transform Bronze → Silver → Gold |
+| **Lakeflow Jobs** | Day 24 | "Run it all reliably" -- orchestrate the entire workflow |
 
 **Lakeflow Jobs** is the orchestration layer. It does not move or transform data itself -- it coordinates the tasks that do. A single job can combine:
 - A Lakeflow Connect ingestion task

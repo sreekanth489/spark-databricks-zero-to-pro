@@ -21,29 +21,21 @@ Lakeflow Connect is the **ingestion layer** of the Databricks Lakeflow ecosystem
 
 Lakeflow has three components that form a complete data engineering platform:
 
-```
-                        Lakeflow Ecosystem
-  ┌─────────────────────────────────────────────────────────────┐
-  │                                                             │
-  │   ┌──────────────┐    ┌──────────────────┐    ┌──────────┐ │
-  │   │   CONNECT    │───>│ SPARK DECLARATIVE│───>│   JOBS   │ │
-  │   │  (Ingest)    │    │   PIPELINES      │    │(Orchestr)│ │
-  │   │   Day 22     │    │  (Transform)     │    │  Day 25  │ │
-  │   │              │    │   Day 24         │    │          │ │
-  │   └──────────────┘    └──────────────────┘    └──────────┘ │
-  │                                                             │
-  │   External Sources     Bronze -> Silver       Scheduling   │
-  │   -> Bronze Tables     -> Gold Tables         & Monitoring │
-  └─────────────────────────────────────────────────────────────┘
-```
+![Lakeflow Ecosystem: Connect → Spark Declarative Pipelines → Jobs](images/lakeflow-ecosystem.excalidraw.png)
 
 - **Lakeflow Connect** (this session): Brings data INTO the Lakehouse from external sources
-- **Spark Declarative Pipelines** (Day 24): Transforms data through the Medallion layers
-- **Lakeflow Jobs** (Day 25): Orchestrates pipelines, connectors, and notebooks on a schedule
+- **Spark Declarative Pipelines** (Day 23): Transforms data through the Medallion layers
+- **Lakeflow Jobs** (Day 24): Orchestrates pipelines, connectors, and notebooks on a schedule
+
+> The Excalidraw source file is available at [`images/lakeflow-ecosystem.excalidraw`](images/lakeflow-ecosystem.excalidraw) for editing.
 
 ---
 
 ## Architecture Overview
+
+![Lakeflow Connect Architecture: Sources → Connectors → Lakehouse](images/lakeflow-connect-architecture.excalidraw.png)
+
+> The Excalidraw source file is available at [`images/lakeflow-connect-architecture.excalidraw`](images/lakeflow-connect-architecture.excalidraw) for editing.
 
 ```
   External Sources                 Lakeflow Connect                    Lakehouse
