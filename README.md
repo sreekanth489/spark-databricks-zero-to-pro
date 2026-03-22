@@ -133,9 +133,9 @@ Incremental ingestion using cloudFiles and schema inference.
 
 CDC patterns, Auto CDC APIs, change tracking.
 
-## Day 22: Delta Live Tables (DLT)
+## Day 22: Spark Declarative Pipelines (Lakeflow SDP)
 
-Declarative pipelines, expectations, automated quality checks.
+Declarative pipelines (formerly DLT), expectations, Auto CDC, Streaming Tables vs Materialized Views, pipeline modes, data quality enforcement. Includes full e-commerce lab with Bronze/Silver/Gold layers and regional views.
 
 ## Day 23: SCD Type 2 Pipelines
 
@@ -144,10 +144,6 @@ Historical data management patterns.
 ## Day 24: Lakeflow Connect
 
 Data ingestion from operational databases.
-
-## Day 25: Lakeflow Declarative Pipelines
-
-Modern pipeline orchestration using Lakeflow.
 
 ## <img src="https://img.shields.io/badge/Phase_6-Performance_&_Cost_Optimization-7B2FF7?style=for-the-badge&logo=speedtest&logoColor=white" />
 
