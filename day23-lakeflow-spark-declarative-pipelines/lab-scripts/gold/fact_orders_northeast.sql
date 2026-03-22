@@ -1,5 +1,5 @@
 -- ---------------------------------------------------------------------------
--- Gold Layer: Regional View -- Northeast
+-- Gold Layer: Regional Materialized View -- Northeast
 -- ---------------------------------------------------------------------------
 -- Filters the denormalized fact_orders view to the Northeast region only.
 -- Provides a pre-filtered view for regional analysts and dashboards.
@@ -8,8 +8,8 @@
 -- Source:  ecommerce.gold.fact_orders
 -- ---------------------------------------------------------------------------
 
-CREATE OR REPLACE VIEW ecommerce.gold.fact_orders_northeast
-COMMENT 'Northeast regional orders view (Gold layer)'
+CREATE OR REFRESH MATERIALIZED VIEW ecommerce.gold.fact_orders_northeast
+COMMENT 'Northeast regional orders materialized view (Gold layer)'
 AS
 SELECT *
 FROM ecommerce.gold.fact_orders

@@ -18,9 +18,9 @@ import pyspark.sql.functions as F
 
 
 @dp.materialized_view(
-    name="calendar",
+    name="ecommerce.silver.calendar",
     comment="Date dimension with US holidays and calendar attributes (Silver layer)",
-    schema="ecommerce.silver",
+    # schema="ecommerce.silver",
     table_properties={
         "quality": "silver",
     },

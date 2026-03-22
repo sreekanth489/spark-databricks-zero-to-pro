@@ -1,8 +1,8 @@
 -- ---------------------------------------------------------------------------
--- Gold Layer: Fact Orders (Denormalized View)
+-- Gold Layer: Fact Orders (Denormalized Materialized View)
 -- ---------------------------------------------------------------------------
 -- Joins silver.orders with silver.stores and silver.calendar to produce
--- a single denormalized view optimized for analytics and reporting.
+-- a single denormalized materialized view optimized for analytics and reporting.
 --
 -- Target: ecommerce.gold.fact_orders
 -- Sources: ecommerce.silver.orders
@@ -10,7 +10,7 @@
 --          ecommerce.silver.calendar
 -- ---------------------------------------------------------------------------
 
-CREATE OR REPLACE VIEW ecommerce.gold.fact_orders
+CREATE OR REFRESH MATERIALIZED VIEW ecommerce.gold.fact_orders
 COMMENT 'Denormalized fact table joining orders, stores, and calendar (Gold layer)'
 AS
 SELECT

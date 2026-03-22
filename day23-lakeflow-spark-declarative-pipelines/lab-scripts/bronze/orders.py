@@ -13,9 +13,9 @@ import pyspark.sql.functions as F
 
 
 @dp.table(
-    name="orders",
+    name="ecommerce.bronze.orders",
     comment="Raw orders ingested from S3 via Auto Loader (Bronze layer)",
-    schema="ecommerce.bronze",
+    # schema="ecommerce.bronze",
     table_properties={
         "quality": "bronze",
         "delta.enableChangeDataFeed": "true",

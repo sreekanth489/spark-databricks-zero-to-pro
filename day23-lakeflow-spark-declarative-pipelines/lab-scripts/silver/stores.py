@@ -13,9 +13,9 @@ import pyspark.sql.functions as F
 
 
 @dp.materialized_view(
-    name="stores",
+    name="ecommerce.silver.stores",
     comment="Cleansed store dimension with business-friendly column names (Silver layer)",
-    schema="ecommerce.silver",
+    # schema="ecommerce.silver",
     table_properties={
         "quality": "silver",
         "delta.enableChangeDataFeed": "true",

@@ -47,9 +47,9 @@ def orders_staging():
 
 # -- Step 2: Target streaming table -----------------------------------------
 dp.create_streaming_table(
-    name="orders",
+    name="ecommerce.silver.orders",
     comment="Cleansed orders with CDC applied via SCD Type 1 (Silver layer)",
-    schema="ecommerce.silver",
+    # schema="ecommerce.silver",
     table_properties={
         "quality": "silver",
         "delta.enableChangeDataFeed": "true",

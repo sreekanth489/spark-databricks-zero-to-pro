@@ -28,9 +28,9 @@ STORES_SCHEMA = StructType([
 
 
 @dp.materialized_view(
-    name="stores",
+    name="ecommerce.bronze.stores",
     comment="Raw stores dimension ingested from S3 CSV (Bronze layer)",
-    schema="ecommerce.bronze",
+    # schema="ecommerce.bronze",
     table_properties={
         "quality": "bronze",
         "delta.enableChangeDataFeed": "true",
