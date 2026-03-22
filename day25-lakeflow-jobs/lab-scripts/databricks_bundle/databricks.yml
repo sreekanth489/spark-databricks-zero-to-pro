@@ -1,0 +1,61 @@
+# databricks.yml -- Databricks Asset Bundle configuration
+#
+# This file defines an e-commerce pipeline bundle that can be deployed
+# across dev, staging, and production environments.
+#
+# Usage:
+#   databricks bundle validate
+#   databricks bundle deploy --target dev
+#   databricks bundle deploy --target prod
+#   databricks bundle run ecommerce_pipeline_job --target dev
+
+bundle:
+  name: ecommerce-pipeline
+
+# Include job and pipeline resource definitions
+include:
+  - resources/*.yml
+
+# Workspace targets for multi-environment deployment
+targets:
+  # ── Development ──
+  dev:
+    workspace:
+      host: https://dbc-abc123.cloud.databricks.com
+    default: true
+    variables:
+      catalog: ecommerce_dev
+      schema_bronze: bronze
+      schema_silver: silver
+      schema_gold: gold
+      warehouse_id: dev_warehouse_id
+      source_path: s3://ecommerce-lakehouse-dev/raw/orders/
+      notification_emails: '["dev-team@company.com"]'
+
+  # ── Staging ──
+  staging:
+    workspace:
+      host: https://dbc-def456.cloud.databricks.com
+    variables:
+      catalog: ecommerce_staging
+      schema_bronze: bronze
+      schema_silver: silver
+      schema_gold: gold
+      warehouse_id: staging_warehouse_id
+      source_path: s3://ecommerce-lakehouse-staging/raw/orders/
+      notification_emails: '["data-engineering-team@company.com"]'
+
+  # ── Production ──
+  prod:
+    workspace:
+      host: https://dbc-ghi789.cloud.databricks.com
+    run_as:
+      service_principal_name: prod-data-engineering-sp
+    variables:
+      catalog: ecommerce
+      schema_bronze: bronze
+      schema_silver: silver
+      schema_gold: gold
+      warehouse_id: prod_warehouse_id
+      source_path: s3://ecommerce-lakehouse/raw/orders/
+      notification_emails: '["data-engineering-team@company.com", "on-call@company.com"]'

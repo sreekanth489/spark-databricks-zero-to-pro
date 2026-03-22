@@ -1,0 +1,11 @@
+product_id,name,category,price,supplier
+P001,Wireless Mouse,Electronics,29.99,TechCorp
+P002,USB-C Hub,Electronics,49.99,TechCorp
+P003,Standing Desk,Furniture,399.99,OfficePro
+P004,Ergonomic Chair,Furniture,549.99,OfficePro
+P005,Mechanical Keyboard,Electronics,89.99,KeyMasters
+P006,Monitor Arm,Accessories,79.99,MountIt
+P007,Desk Lamp,Lighting,34.99,BrightLife
+P008,Webcam HD,Electronics,69.99,TechCorp
+P009,Noise-Cancelling Headphones,Electronics,199.99,AudioWave
+P010,Laptop Stand,Accessories,44.99,MountIt

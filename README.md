@@ -133,17 +133,21 @@ Incremental ingestion using cloudFiles and schema inference.
 
 CDC patterns, Auto CDC APIs, change tracking.
 
-## Day 22: Spark Declarative Pipelines (Lakeflow SDP)
+## Day 22: Lakeflow Connect
 
-Declarative pipelines (formerly DLT), expectations, Auto CDC, Streaming Tables vs Materialized Views, pipeline modes, data quality enforcement. Includes full e-commerce lab with Bronze/Silver/Gold layers and regional views.
+No-code and standard connectors for fast data ingestion from databases, cloud storage, Kafka, SaaS apps, and local files into the Databricks Lakehouse. Batch, incremental, and streaming ingestion modes.
 
 ## Day 23: SCD Type 2 Pipelines
 
 Historical data management patterns.
 
-## Day 24: Lakeflow Connect
+## Day 24: Lakeflow Spark Declarative Pipelines
 
-Data ingestion from operational databases.
+Declarative pipelines (formerly DLT), expectations, Auto CDC, Streaming Tables vs Materialized Views, pipeline modes, data quality enforcement. Includes full e-commerce lab with Bronze/Silver/Gold layers and regional views.
+
+## Day 25: Lakeflow Jobs
+
+Smart orchestration with multi-task DAGs, triggers (scheduled, continuous, file arrival), repair runs, RBAC, and Databricks Asset Bundles for CI/CD.
 
 ## <img src="https://img.shields.io/badge/Phase_6-Performance_&_Cost_Optimization-7B2FF7?style=for-the-badge&logo=speedtest&logoColor=white" />
 

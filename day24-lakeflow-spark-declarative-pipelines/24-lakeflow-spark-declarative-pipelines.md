@@ -1,5 +1,8 @@
-# Spark Declarative Pipelines (Lakeflow SDP)
-> Module: Data Engineering Pipelines | Day 22 | Level: Intermediate | Time: 90 min
+# Lakeflow Spark Declarative Pipelines
+> Module: Data Engineering Pipelines | Day 24 | Level: Intermediate | Time: 90 min
+
+![Lakeflow Spark Declarative Pipelines: Declarative ETL with automated orchestration](images/lakeflow-spark-declarative-pipelines.png)
+<p align="center"><em>Image credit: <a href="https://www.databricks.com/product/lakeflow">Databricks</a></em></p>
 
 ## Learning Objectives
 

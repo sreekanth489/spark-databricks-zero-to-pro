@@ -1,0 +1,8 @@
+{"customer_id": "C001", "name": "Alice Johnson", "email": "alice.johnson@example.com", "signup_date": "2024-01-15", "tier": "Gold"}
+{"customer_id": "C002", "name": "Bob Smith", "email": "bob.smith@example.com", "signup_date": "2024-02-20", "tier": "Silver"}
+{"customer_id": "C003", "name": "Carol Williams", "email": "carol.w@example.com", "signup_date": "2024-03-10", "tier": "Bronze"}
+{"customer_id": "C004", "name": "David Brown", "email": "david.brown@example.com", "signup_date": "2024-04-05", "tier": "Gold"}
+{"customer_id": "C005", "name": "Eva Martinez", "email": "eva.m@example.com", "signup_date": "2024-05-18", "tier": "Silver"}
+{"customer_id": "C006", "name": "Frank Lee", "email": "frank.lee@example.com", "signup_date": "2024-06-22", "tier": "Bronze"}
+{"customer_id": "C007", "name": "Grace Kim", "email": "grace.kim@example.com", "signup_date": "2024-07-30", "tier": "Gold"}
+{"customer_id": "C008", "name": "Henry Davis", "email": "henry.d@example.com", "signup_date": "2024-08-14", "tier": "Silver"}

@@ -1,11 +1,11 @@
-# Day 22: Spark Declarative Pipelines (Lakeflow SDP)
+# Day 24: Lakeflow Spark Declarative Pipelines
 
 > Module: Data Engineering Pipelines | Level: Intermediate | Time: 90 min
 
 ## Learning Objectives
 
 - Understand the shift from imperative to declarative pipeline development
-- Build end-to-end Spark Declarative Pipelines with Bronze, Silver, and Gold layers
+- Build end-to-end Lakeflow Spark Declarative Pipelines with Bronze, Silver, and Gold layers
 - Configure expectations for automated data quality enforcement (warn, drop, fail)
 - Implement Change Data Capture (CDC) with Auto CDC flows (SCD Type 1 and Type 2)
 - Choose between Streaming Tables, Materialized Views, and Views for each use case
@@ -14,7 +14,7 @@
 
 ## Key Concepts
 
-- **Spark Declarative Pipelines (SDP)** -- formerly Delta Live Tables (DLT), rebranded as Lakeflow Declarative Pipelines; you declare datasets and queries, the framework handles execution
+- **Lakeflow Spark Declarative Pipelines (SDP)** -- formerly Delta Live Tables (DLT); you declare datasets and queries, the framework handles execution
 - **Streaming Table** -- append-only table populated by a streaming query, ideal for ingestion/Bronze layer
 - **Materialized View** -- table populated by a batch query, fully recomputed on each run, ideal for Silver/Gold layers
 - **Expectations** -- declarative data quality constraints that can warn, drop bad rows, or fail the pipeline
@@ -29,16 +29,17 @@
 - [Day 19: Structured Streaming](../day19-structured-streaming/) -- streaming fundamentals
 - [Day 20: Auto Loader](../day20-auto-loader/) -- file ingestion with cloudFiles
 - [Day 21: Change Data Capture](../day21-change-data-capture/) -- CDC concepts and MERGE patterns
+- [Day 22: Lakeflow Connect](../day22-lakeflow-connect/) -- data ingestion into the Lakehouse
 
 ## Hands-On
 
-- **Guide**: [`22-spark-declarative-pipelines.md`](22-spark-declarative-pipelines.md) -- comprehensive theory, architecture diagrams, and cloud-specific notes
-- **Notebook**: [`22-spark-declarative-pipelines_notebook.py`](22-spark-declarative-pipelines_notebook.py) -- interactive learning notebook covering SDP concepts, syntax, and pipeline configuration
+- **Guide**: [`24-lakeflow-spark-declarative-pipelines.md`](24-lakeflow-spark-declarative-pipelines.md) -- comprehensive theory, architecture diagrams, and cloud-specific notes
+- **Notebook**: [`24-lakeflow-spark-declarative-pipelines_notebook.py`](24-lakeflow-spark-declarative-pipelines_notebook.py) -- interactive learning notebook covering SDP concepts, syntax, and pipeline configuration
 - **Lab Scripts**: [`lab-scripts/`](lab-scripts/) -- production-grade pipeline source files (Bronze, Silver, Gold) ready to run as a Databricks pipeline
 
 ## Certification Tip
 
-Spark Declarative Pipelines (still referenced as "Delta Live Tables" or "DLT" in many exam materials) is heavily tested on the **Databricks Certified Data Engineer Professional** exam. Expect questions on:
+Lakeflow Spark Declarative Pipelines (still referenced as "Delta Live Tables" or "DLT" in many exam materials) is heavily tested on the **Databricks Certified Data Engineer Professional** exam. Expect questions on:
 - Expectation syntax and enforcement actions (`expect`, `expect_or_drop`, `expect_or_fail`)
 - Choosing between Streaming Tables and Materialized Views
 - Pipeline deployment modes (triggered vs continuous, development vs production)
@@ -47,4 +48,4 @@ Spark Declarative Pipelines (still referenced as "Delta Live Tables" or "DLT" in
 
 ## Next Steps
 
-- [Day 23: SCD Type 2 Pipelines](../day23-scd-type-2-pipelines/)
+- [Day 25: Lakeflow Jobs](../day25-lakeflow-jobs/)

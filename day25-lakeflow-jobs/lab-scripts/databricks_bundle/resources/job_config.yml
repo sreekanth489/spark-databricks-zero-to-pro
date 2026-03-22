@@ -1,0 +1,93 @@
+# resources/job_config.yml -- Job resource definition for the e-commerce pipeline
+#
+# This file is included by databricks.yml and defines the multi-task job
+# with task dependencies, cluster configuration, and scheduling.
+#
+# Variables like ${var.catalog} are resolved from the target-specific
+# variables in databricks.yml.
+
+resources:
+  jobs:
+    ecommerce_pipeline_job:
+      name: "ecommerce_daily_pipeline"
+      description: "End-to-end e-commerce data pipeline: ingest -> transform -> report -> notify"
+
+      # ── Schedule: daily at 2 AM UTC ──
+      schedule:
+        quartz_cron_expression: "0 0 2 * * ?"
+        timezone_id: "UTC"
+        pause_status: "PAUSED"
+
+      # ── Email notifications ──
+      email_notifications:
+        on_failure: ${var.notification_emails}
+        on_success: ${var.notification_emails}
+
+      # ── Tags ──
+      tags:
+        team: "data-engineering"
+        domain: "ecommerce"
+        managed_by: "databricks-asset-bundles"
+
+      # ── Shared job cluster for cost efficiency ──
+      job_clusters:
+        - job_cluster_key: "etl_cluster"
+          new_cluster:
+            spark_version: "15.4.x-scala2.12"
+            node_type_id: "i3.xlarge"
+            num_workers: 2
+            spark_conf:
+              "spark.databricks.delta.preview.enabled": "true"
+            aws_attributes:
+              availability: "SPOT_WITH_FALLBACK"
+              first_on_demand: 1
+
+      # ── Task definitions ──
+      tasks:
+        # Task 1: Ingest raw orders from S3
+        - task_key: "ingest_orders"
+          description: "Ingest raw order data from S3 into ${var.catalog}.${var.schema_bronze}.orders"
+          notebook_task:
+            notebook_path: "../src/task_ingest_orders.py"
+            base_parameters:
+              catalog: "${var.catalog}"
+              source_path: "${var.source_path}"
+              target_table: "${var.catalog}.${var.schema_bronze}.orders"
+          job_cluster_key: "etl_cluster"
+          max_retries: 3
+          min_retry_interval_millis: 60000
+
+        # Task 2: Run SDP pipeline (Bronze -> Silver -> Gold)
+        - task_key: "transform_pipeline"
+          description: "Run Spark Declarative Pipeline: Bronze -> Silver -> Gold"
+          depends_on:
+            - task_key: "ingest_orders"
+          notebook_task:
+            notebook_path: "../src/transform_pipeline.py"
+            base_parameters:
+              catalog: "${var.catalog}"
+          job_cluster_key: "etl_cluster"
+          max_retries: 2
+          min_retry_interval_millis: 120000
+
+        # Task 3: Generate daily revenue report (SQL)
+        - task_key: "daily_revenue_report"
+          description: "Aggregate daily revenue by store from Gold layer"
+          depends_on:
+            - task_key: "transform_pipeline"
+          sql_task:
+            warehouse_id: "${var.warehouse_id}"
+            file:
+              path: "../src/task_daily_report.sql"
+
+        # Task 4: Send completion notification
+        - task_key: "send_notification"
+          description: "Notify team of pipeline completion"
+          depends_on:
+            - task_key: "daily_revenue_report"
+          notebook_task:
+            notebook_path: "../src/send_notification.py"
+            base_parameters:
+              channel: "#data-engineering"
+              message: "E-commerce daily pipeline completed successfully"
+          job_cluster_key: "etl_cluster"
