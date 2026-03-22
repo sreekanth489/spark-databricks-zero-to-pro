@@ -1,10 +1,10 @@
-# Day 24: Lakeflow Spark Declarative Pipelines
+# Day 23: Lakeflow Spark Declarative Pipelines
 
 > Module: Data Engineering Pipelines | Level: Intermediate | Time: 90 min
 
 ## Learning Objectives
 
-- Understand the shift from imperative to declarative pipeline development
+- Understand the evolution from Traditional Spark to DLT to Lakeflow Spark Declarative Pipelines
 - Build end-to-end Lakeflow Spark Declarative Pipelines with Bronze, Silver, and Gold layers
 - Configure expectations for automated data quality enforcement (warn, drop, fail)
 - Implement Change Data Capture (CDC) with Auto CDC flows (SCD Type 1 and Type 2)
@@ -33,8 +33,18 @@
 
 ## Hands-On
 
-- **Guide**: [`24-lakeflow-spark-declarative-pipelines.md`](24-lakeflow-spark-declarative-pipelines.md) -- comprehensive theory, architecture diagrams, and cloud-specific notes
-- **Notebook**: [`24-lakeflow-spark-declarative-pipelines_notebook.py`](24-lakeflow-spark-declarative-pipelines_notebook.py) -- interactive learning notebook covering SDP concepts, syntax, and pipeline configuration
+### Evolution Notebooks (Traditional Spark → DLT → Lakeflow SDP)
+
+These three notebooks build the **same e-commerce pipeline** using three approaches, showing how each generation solved the problems of the previous one:
+
+1. **[`23-traditional-spark-pipeline_notebook.py`](23-traditional-spark-pipeline_notebook.py)** -- Manual Spark pipeline with explicit orchestration, checkpoints, and error handling (the pain)
+2. **[`23-dlt-pipeline_notebook.py`](23-dlt-pipeline_notebook.py)** -- Delta Live Tables pipeline with `@dlt.table` decorators, expectations, and auto-DAG (the improvement)
+3. **[`23-lakeflow-sdp-pipeline_notebook.py`](23-lakeflow-sdp-pipeline_notebook.py)** -- Lakeflow SDP pipeline with `@dp.table`, Auto CDC, and full platform integration (the evolution)
+
+### Core Content
+
+- **Guide**: [`23-lakeflow-spark-declarative-pipelines.md`](23-lakeflow-spark-declarative-pipelines.md) -- comprehensive theory, architecture diagrams, evolution comparison, and cloud-specific notes
+- **Notebook**: [`23-lakeflow-spark-declarative-pipelines_notebook.py`](23-lakeflow-spark-declarative-pipelines_notebook.py) -- interactive learning notebook covering SDP concepts, syntax, and pipeline configuration
 - **Lab Scripts**: [`lab-scripts/`](lab-scripts/) -- production-grade pipeline source files (Bronze, Silver, Gold) ready to run as a Databricks pipeline
 
 ## Certification Tip
@@ -48,4 +58,4 @@ Lakeflow Spark Declarative Pipelines (still referenced as "Delta Live Tables" or
 
 ## Next Steps
 
-- [Day 25: Lakeflow Jobs](../day25-lakeflow-jobs/)
+- [Day 24: Lakeflow Jobs](../day24-lakeflow-jobs/)

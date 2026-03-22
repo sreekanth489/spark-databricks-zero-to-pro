@@ -4,7 +4,7 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC # Day 24: Lakeflow Spark Declarative Pipelines
+# MAGIC # Day 23: Lakeflow Spark Declarative Pipelines
 # MAGIC
 # MAGIC **Objective**: Understand Spark Declarative Pipelines -- the declarative framework for building
 # MAGIC production-grade data pipelines on Databricks. Formerly known as Delta Live Tables (DLT).

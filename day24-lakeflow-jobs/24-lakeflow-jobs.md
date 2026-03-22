@@ -1,5 +1,5 @@
 # Lakeflow Jobs
-> Module: Data Engineering Orchestration | Day 25 | Level: Intermediate | Time: 60 min
+> Module: Data Engineering Orchestration | Day 24 | Level: Intermediate | Time: 60 min
 
 ![Lakeflow Jobs: Smart orchestration with triggers, control flow, observability, and serverless compute](images/lakeflow-jobs.png)
 <p align="center"><em>Image credit: <a href="https://www.databricks.com/product/lakeflow">Databricks</a></em></p>

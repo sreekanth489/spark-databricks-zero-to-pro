@@ -1,4 +1,4 @@
-# Day 25: Lakeflow Jobs
+# Day 24: Lakeflow Jobs
 
 > Module: Data Engineering Orchestration | Level: Intermediate | Time: 60 min
 
@@ -26,13 +26,13 @@
 ## Prerequisites
 
 - [Day 22: Lakeflow Connect](../day22-lakeflow-connect/) -- data ingestion into the Lakehouse
-- [Day 24: Lakeflow Spark Declarative Pipelines](../day24-lakeflow-spark-declarative-pipelines/) -- declarative pipeline development
+- [Day 23: Lakeflow Spark Declarative Pipelines](../day23-lakeflow-spark-declarative-pipelines/) -- declarative pipeline development
 - [Day 18: Medallion Architecture](../day18-medallion-architecture/) -- Bronze/Silver/Gold layering
 
 ## Hands-On
 
-- **Guide**: [`25-lakeflow-jobs.md`](25-lakeflow-jobs.md) -- comprehensive theory, architecture diagrams, and cloud-specific notes
-- **Notebook**: [`25-lakeflow-jobs_notebook.py`](25-lakeflow-jobs_notebook.py) -- interactive notebook covering job creation, DAG patterns, triggers, and the Databricks SDK
+- **Guide**: [`24-lakeflow-jobs.md`](24-lakeflow-jobs.md) -- comprehensive theory, architecture diagrams, and cloud-specific notes
+- **Notebook**: [`24-lakeflow-jobs_notebook.py`](24-lakeflow-jobs_notebook.py) -- interactive notebook covering job creation, DAG patterns, triggers, and the Databricks SDK
 - **Lab Scripts**: [`lab-scripts/`](lab-scripts/) -- production-ready scripts for job creation, DAB configuration, and sample tasks
 
 ## Certification Tip
@@ -46,4 +46,4 @@ Lakeflow Jobs (referenced as "Workflows" or "Jobs" in exam materials) is tested 
 
 ## Next Steps
 
-- [Day 26: Performance Engineering](../day26-performance-engineering/)
+- [Day 25: SCD Type 2 Pipelines](../day25-scd-type-2-pipelines/)

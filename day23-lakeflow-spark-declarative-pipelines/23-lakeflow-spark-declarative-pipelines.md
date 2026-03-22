@@ -1,5 +1,5 @@
 # Lakeflow Spark Declarative Pipelines
-> Module: Data Engineering Pipelines | Day 24 | Level: Intermediate | Time: 90 min
+> Module: Data Engineering Pipelines | Day 23 | Level: Intermediate | Time: 90 min
 
 ![Lakeflow Spark Declarative Pipelines: Declarative ETL with automated orchestration](images/lakeflow-spark-declarative-pipelines.png)
 <p align="center"><em>Image credit: <a href="https://www.databricks.com/product/lakeflow">Databricks</a></em></p>
@@ -13,6 +13,91 @@ After completing this session, you will be able to:
 - Configure Auto CDC flows for change data capture with SCD Type 1 and Type 2
 - Choose the right pipeline mode (triggered vs continuous) and cluster strategy
 - Read pipeline DAGs, event logs, and data quality metrics
+
+---
+
+## Evolution: Traditional Spark → DLT → Lakeflow SDP
+
+Before diving into SDP concepts, it's important to understand **why** this framework exists by seeing how we built pipelines before.
+
+### The Three Eras of Spark Pipelines
+
+| Era | Approach | You Manage | Framework Manages |
+|-----|----------|------------|-------------------|
+| **Traditional Spark** (2014+) | Imperative | Everything: checkpoints, ordering, retries, CDC, quality | Individual query optimization |
+| **Delta Live Tables** (2021+) | Declarative | Pipeline configuration | DAG, checkpoints, expectations, CDC |
+| **Lakeflow SDP** (2025+) | Declarative + Platform | Business logic only | Everything + orchestration + multi-pipeline workflows |
+
+### Side-by-Side Code Comparison
+
+**Bronze ingestion -- three ways:**
+
+```python
+# ──── ERA 1: Traditional Spark (manual everything) ────
+df = spark.readStream.format("cloudFiles") \
+    .option("cloudFiles.format", "json") \
+    .load("/data/orders")
+
+df.writeStream \
+    .format("delta") \
+    .option("checkpointLocation", "/chk/bronze") \    # ❌ Manual checkpoint
+    .trigger(availableNow=True) \
+    .toTable("bronze.orders")                          # ❌ No quality tracking
+
+
+# ──── ERA 2: Delta Live Tables (declarative, Databricks-only) ────
+import dlt
+
+@dlt.table(comment="Raw orders")
+def bronze_orders():
+    return spark.readStream.format("cloudFiles") \
+        .option("cloudFiles.format", "json") \
+        .load("/data/orders")                          # ✅ No writeStream needed
+
+
+# ──── ERA 3: Lakeflow SDP (declarative, open-source Apache Spark) ────
+from pyspark import pipelines as dp
+
+@dp.table(
+    name="ecommerce.bronze.orders",
+    comment="Raw orders via Auto Loader",
+    table_properties={"delta.enableChangeDataFeed": "true"},
+)
+def orders_bronze():
+    return spark.readStream.format("cloudFiles") \
+        .option("cloudFiles.format", "json") \
+        .option("cloudFiles.schemaEvolutionMode", "rescue") \
+        .load("s3://ecommerce-lakehouse/data-store/orders/") \
+        .withColumn("ingest_datetime", F.current_timestamp())  # ✅ Standard PySpark API
+```
+
+### What Each Generation Solved
+
+| Capability | Traditional Spark | DLT | Lakeflow SDP |
+|-----------|:-:|:-:|:-:|
+| Checkpoint management | Manual | Auto | Auto |
+| Data quality tracking | None | Expectations | Expectations |
+| Pipeline DAG | None | Auto | Auto |
+| CDC | Manual MERGE | `apply_changes` | Auto CDC Flow |
+| Orchestration | Manual scripts | Limited | Lakeflow Jobs |
+| Multi-pipeline workflows | Separate jobs | Not native | Native |
+| Open source | Yes | No (Databricks-only) | Yes (Apache Spark) |
+| Pre-validation | None | Basic | Full graph analysis |
+| Parallelization | Manual threading | Automatic | Automatic |
+| Schema evolution | Manual | Supported | Supported + rescue |
+
+### Teaching Analogy
+
+```
+Traditional Spark = Cooking manually         (you manage everything)
+DLT              = Smart cooking assistant   (handles timing and quality)
+Lakeflow SDP     = Full restaurant kitchen   (manages the entire operation)
+```
+
+> **Hands-on**: See the three evolution notebooks that build the same pipeline using each approach:
+> - [`23-traditional-spark-pipeline_notebook.py`](23-traditional-spark-pipeline_notebook.py)
+> - [`23-dlt-pipeline_notebook.py`](23-dlt-pipeline_notebook.py)
+> - [`23-lakeflow-sdp-pipeline_notebook.py`](23-lakeflow-sdp-pipeline_notebook.py)
 
 ---
 
@@ -559,4 +644,5 @@ On the **Databricks Certified Data Engineer Professional** exam, SDP (referenced
 
 ## Next Steps
 
-- [Day 23: SCD Type 2 Pipelines](../day23-scd-type-2-pipelines/) -- deep dive into slowly changing dimensions with SDP
+- [Day 24: Lakeflow Jobs](../day24-lakeflow-jobs/) -- orchestrate Connect + SDP + analytics into production workflows
+- [Day 25: SCD Type 2 Pipelines](../day25-scd-type-2-pipelines/) -- deep dive into slowly changing dimensions with SDP

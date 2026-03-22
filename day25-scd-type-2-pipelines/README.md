@@ -1,4 +1,4 @@
-# Day 23: SCD Type 2 Pipelines
+# Day 25: SCD Type 2 Pipelines
 
 Historical data management patterns.
 

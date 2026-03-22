@@ -4,7 +4,7 @@
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC # Day 25: Lakeflow Jobs
+# MAGIC # Day 24: Lakeflow Jobs
 # MAGIC
 # MAGIC **Objective**: Understand Lakeflow Jobs -- the orchestration layer that ties together
 # MAGIC Lakeflow Connect (ingestion), Spark Declarative Pipelines (transformation), and any other
