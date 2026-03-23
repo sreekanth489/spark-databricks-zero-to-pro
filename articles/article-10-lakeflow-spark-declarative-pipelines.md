@@ -190,7 +190,7 @@ But DLT used a **custom API** (`import dlt`, `dlt.read_stream`). It looked diffe
 The current evolution. Same declarative benefits as DLT, but built on **standard PySpark**.
 
 ```python
-import databricks.declarative_pipelines as dp
+from pyspark import pipelines as dp
 
 @dp.table
 def bronze_orders():
@@ -212,7 +212,7 @@ def silver_orders():
 
 Notice what changed:
 
-- `import dlt` became `import databricks.declarative_pipelines as dp`
+- `import dlt` became `from pyspark import pipelines as dp`
 - `dlt.read_stream("bronze_orders")` became `spark.readStream.table("LIVE.bronze_orders")`
 - Everything else is standard PySpark
 
@@ -336,12 +336,15 @@ Key characteristics:
 ### Temporary View
 
 ```python
-@dp.view(is_temporary=True)
+@dp.view(
+    name="reusable_date_logic",
+    comment="Helper view scoped to this pipeline"
+)
 def reusable_date_logic():
     return spark.sql("SELECT current_date() AS today, date_sub(current_date(), 30) AS thirty_days_ago")
 ```
 
-A temporary view is like a regular view but **scoped to the current pipeline only**. It cannot be referenced by other pipelines.
+A temporary view is **scoped to the current pipeline only**. It cannot be referenced by other pipelines or queried directly.
 
 Use it for helper logic that's only relevant within one pipeline.
 
@@ -352,7 +355,7 @@ Use it for helper logic that's only relevant within one pipeline.
 | **Streaming Table** (`@dp.table`) | Yes | No (append-only) | Bronze layer, raw ingestion |
 | **Materialized View** (`@dp.materialized_view`) | Yes | Yes (full recompute) | Silver/Gold layers, aggregations |
 | **View** (`@dp.view`) | No | Yes | Intermediate staging |
-| **Temporary View** (`@dp.view(is_temporary=True)`) | No | Yes | Pipeline-scoped helpers |
+| **Temporary View** (`@dp.view`) | No | Yes | Pipeline-scoped helpers |
 
 The rule of thumb from our session:
 
@@ -528,7 +531,7 @@ Error-prone. Tedious. A breeding ground for bugs.
 ### The After: Auto CDC
 
 ```python
-import databricks.declarative_pipelines as dp
+from pyspark import pipelines as dp
 
 dp.create_auto_cdc_flow(
     name="silver_orders",
@@ -536,7 +539,7 @@ dp.create_auto_cdc_flow(
     source="LIVE.bronze_orders_cdc",
     keys=["order_id"],
     sequence_by="updated_at",
-    scd_type=1
+    stored_as_scd_type=1
 )
 ```
 
@@ -560,7 +563,7 @@ dp.create_auto_cdc_flow(
     source="LIVE.bronze_orders_cdc",
     keys=["order_id"],
     sequence_by="updated_at",
-    scd_type=1
+    stored_as_scd_type=1
 )
 ```
 
@@ -575,7 +578,7 @@ dp.create_auto_cdc_flow(
     source="LIVE.bronze_orders_cdc",
     keys=["order_id"],
     sequence_by="updated_at",
-    scd_type=2
+    stored_as_scd_type=2
 )
 ```
 
@@ -626,7 +629,7 @@ Gold:
 **Orders — Streaming Table:**
 
 ```python
-import databricks.declarative_pipelines as dp
+from pyspark import pipelines as dp
 
 @dp.table(
     comment="Raw orders ingested from S3 via Auto Loader"
@@ -775,7 +778,7 @@ dp.create_auto_cdc_flow(
     source="LIVE.silver_orders_staging",
     keys=["order_id"],
     sequence_by="order_timestamp",
-    scd_type=1
+    stored_as_scd_type=1
 )
 ```
 
@@ -945,7 +948,7 @@ If you have existing DLT pipelines, the migration is straightforward:
 
 | DLT | SDP |
 |-----|-----|
-| `import dlt` | `import databricks.declarative_pipelines as dp` |
+| `import dlt` | `from pyspark import pipelines as dp` |
 | `@dlt.table` | `@dp.table` |
 | `@dlt.view` | `@dp.view` |
 | `dlt.read("table")` | `spark.read.table("LIVE.table")` |
