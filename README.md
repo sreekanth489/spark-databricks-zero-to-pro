@@ -24,6 +24,9 @@ Every topic includes a **conceptual guide** (`.md`) and a **runnable Databricks 
 | 16 | Delta Lake Advanced Features | [Inside the Delta Log (Part 4): Snapshot Reconstruction, Checkpoints & Time Travel Internals](https://medium.com/@sreekanth489/inside-the-delta-log-part-4-snapshot-reconstruction-checkpoints-time-travel-internals-a84210ff0f51) |
 | 16 | Delta Lake Advanced Features | [Inside the Delta Log (Part 5): Concurrency, Isolation & Conflict Detection Internals](https://medium.com/@sreekanth489/inside-the-delta-log-part-4-snapshot-reconstruction-checkpoints-time-travel-internals-a84210ff0f51) |
 | 17 | Data Skipping & Z-ORDER | [Inside the Delta Log (Part 6): Stats, Data Skipping & Z-ORDER Internals](https://medium.com/@sreekanth489/inside-the-delta-log-part-6-stats-data-skipping-z-order-internals-59cb7f1c89c7) |
+| 22 | Lakeflow Connect | Lakeflow Connect: Getting Data Into the Lakehouse Without Writing a Single Line of Code |
+| 23 | Lakeflow Spark Declarative Pipelines | From Imperative Spark to Declarative Pipelines: The Evolution That Changes Everything |
+| 24 | Lakeflow Jobs | Lakeflow Jobs: Orchestrating Your Entire Data Platform |
 
 *More articles will be added as the series progresses.*
 
