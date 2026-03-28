@@ -10,6 +10,7 @@
 
 from pyspark import pipelines as dp
 import pyspark.sql.functions as F
+from pyspark.sql.functions import col
 
 
 @dp.table(
@@ -33,6 +34,6 @@ def orders():
         .option("header", "true")
         .option("maxFilesPerTrigger", "100")
         .load("s3://ecommerce-lakehouse/data-store/orders")
-        .withColumn("file_name", F.input_file_name())
+        .withColumn("file_name", col("_metadata.file_name"))
         .withColumn("ingest_datetime", F.current_timestamp())
     )

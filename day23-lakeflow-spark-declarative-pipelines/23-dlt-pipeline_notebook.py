@@ -56,7 +56,7 @@ def bronze_orders():
         .option("cloudFiles.inferColumnTypes", "true")
         .load("s3://ecommerce-lakehouse/data-store/orders/")
         .withColumn("ingest_timestamp", F.current_timestamp())
-        .withColumn("source_file", F.input_file_name())
+        .withColumn("source_file", col("_metadata.file_name"))
     )
 
 # No writeStream, no checkpoint management

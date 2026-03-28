@@ -68,6 +68,7 @@
 
 from pyspark import pipelines as dp
 import pyspark.sql.functions as F
+from pyspark.sql.functions import col
 
 # COMMAND ----------
 
@@ -87,7 +88,7 @@ def orders_bronze():
         .option("cloudFiles.inferColumnTypes", "true")
         .option("cloudFiles.schemaEvolutionMode", "rescue")
         .load("s3://ecommerce-lakehouse/data-store/orders/")
-        .withColumn("file_name", F.input_file_name())
+        .withColumn("file_name", col("_metadata.file_name"))
         .withColumn("ingest_datetime", F.current_timestamp())
     )
 

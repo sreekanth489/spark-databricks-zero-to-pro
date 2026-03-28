@@ -11,6 +11,7 @@
 
 from pyspark import pipelines as dp
 import pyspark.sql.functions as F
+from pyspark.sql.functions import col
 from pyspark.sql.types import (
     StructType,
     StructField,
@@ -47,6 +48,6 @@ def stores():
         .option("columnNameOfCorruptRecord", "_corrupt_record")
         .schema(STORES_SCHEMA)
         .load("s3://ecommerce-lakehouse/data-store/stores")
-        .withColumn("file_name", F.input_file_name())
+        .withColumn("file_name", col("_metadata.file_name"))
         .withColumn("ingest_datetime", F.current_timestamp())
     )

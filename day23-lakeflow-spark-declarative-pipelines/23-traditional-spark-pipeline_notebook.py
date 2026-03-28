@@ -68,6 +68,7 @@ gold_table_path = "/mnt/ecommerce/gold/daily_revenue"
 # COMMAND ----------
 
 from pyspark.sql import functions as F
+from pyspark.sql.functions import col
 
 # --- Bronze: Raw Ingestion ---
 
@@ -79,7 +80,7 @@ bronze_df = (
     .option("cloudFiles.schemaLocation", "/chk/ecommerce/bronze_orders_schema")
     .load(source_path)
     .withColumn("ingest_timestamp", F.current_timestamp())
-    .withColumn("source_file", F.input_file_name())
+    .withColumn("source_file", col("_metadata.file_name"))
 )
 
 # Write to bronze table
