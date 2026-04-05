@@ -50,6 +50,46 @@
 # MAGIC **Platform**: Databricks on AWS with Unity Catalog enabled
 # MAGIC
 # MAGIC **Prerequisites**: Unity Catalog metastore assigned to this workspace
+# MAGIC
+# MAGIC ---
+# MAGIC
+# MAGIC ## Foundation: What is a Metastore?
+# MAGIC
+# MAGIC A table has TWO parts — both must exist and stay in sync:
+# MAGIC
+# MAGIC ```
+# MAGIC ┌──────────────────────────────────────────────────────────────────────┐
+# MAGIC │                      THE TWO-PART MODEL                              │
+# MAGIC │                                                                      │
+# MAGIC │   ┌─────────────────────────────────┐                               │
+# MAGIC │   │          METASTORE               │  ← "What is this table?"     │
+# MAGIC │   │   (metadata / DDL registry)      │                               │
+# MAGIC │   │                                  │                               │
+# MAGIC │   │  Table: employees                │                               │
+# MAGIC │   │  Columns: id INT, name STRING    │                               │
+# MAGIC │   │  Format: Delta                   │                               │
+# MAGIC │   │  Location: s3://hr/employees/    │                               │
+# MAGIC │   │  Owner: alice@company.com        │                               │
+# MAGIC │   │  ACLs: analysts → SELECT         │                               │
+# MAGIC │   └──────────────┬──────────────────┘                               │
+# MAGIC │                  │  ← must be in SYNC →                              │
+# MAGIC │   ┌──────────────▼──────────────────┐                               │
+# MAGIC │   │       CLOUD STORAGE             │  ← "Where is the data?"       │
+# MAGIC │   │   (S3 / ADLS Gen2 / GCS)        │                               │
+# MAGIC │   │                                  │                               │
+# MAGIC │   │  s3://my-bucket/hr/employees/    │                               │
+# MAGIC │   │  ├── part-00001.parquet          │                               │
+# MAGIC │   │  ├── _delta_log/00000.json       │                               │
+# MAGIC │   │  └── part-00002.parquet          │                               │
+# MAGIC │   └──────────────────────────────────┘                               │
+# MAGIC │                                                                      │
+# MAGIC │  Spark reads BOTH: metastore for schema/location, storage for rows  │
+# MAGIC │  Out of sync = query failure or wrong results                        │
+# MAGIC └──────────────────────────────────────────────────────────────────────┘
+# MAGIC
+# MAGIC  Hive Metastore  → per workspace, 2-level namespace (schema.table)
+# MAGIC  Unity Catalog   → account-level, 3-level namespace (catalog.schema.table)
+# MAGIC ```
 
 # COMMAND ----------
 
@@ -558,36 +598,98 @@ print(f"Written to: {volume_path}/new_employees.csv")
 
 # MAGIC %md
 # MAGIC ---
-# MAGIC ## Step 11: Data Lineage (Catalog Explorer)
+# MAGIC ## Step 11: Data Lineage
 # MAGIC
-# MAGIC Unity Catalog automatically tracks lineage. The `active_employees_vw` view
-# MAGIC we created reads from `employees` and `departments` — this dependency is
-# MAGIC automatically recorded.
+# MAGIC ### What is Lineage and Why Does It Matter?
 # MAGIC
-# MAGIC **To view lineage in the UI**:
-# MAGIC 1. Click **Catalog** in the left sidebar
-# MAGIC 2. Navigate: `databricks_pro > uc_fundamentals_lab > active_employees_vw`
+# MAGIC Lineage tracks the **origin and flow of data** — automatically, without any configuration.
+# MAGIC
+# MAGIC ```
+# MAGIC  BEFORE UNITY CATALOG                  WITH UNITY CATALOG
+# MAGIC  ────────────────────────              ───────────────────────────
+# MAGIC  Lineage = manual spreadsheet          Lineage = automatic, always current
+# MAGIC  "I think orders feeds sales..."       "orders_raw → orders_clean → sales_gold"
+# MAGIC                                         tracked to the second, with who ran it
+# MAGIC ```
+# MAGIC
+# MAGIC **Use cases**:
+# MAGIC - **Impact analysis**: "If I change `orders_raw`, what downstream tables break?"
+# MAGIC - **Root cause**: "Dashboard shows wrong numbers — which upstream table is corrupt?"
+# MAGIC - **Compliance**: "Where does PII from `customers` flow to?"
+# MAGIC - **Trust**: "Can I trust `sales_gold`? Let me see its lineage."
+# MAGIC
+# MAGIC ### What We Have in This Lab
+# MAGIC
+# MAGIC ```
+# MAGIC  [Table: employees] ──────┐
+# MAGIC                            ├──▶ [View: active_employees_vw]
+# MAGIC  [Table: departments] ────┘
+# MAGIC
+# MAGIC  [Volume: raw_files]  ──▶  read_files()  ──▶  your queries
+# MAGIC ```
+# MAGIC
+# MAGIC ### View Lineage in Catalog Explorer (UI)
+# MAGIC 1. Click **Catalog** icon in the left sidebar
+# MAGIC 2. Navigate: `databricks_pro` → `uc_fundamentals_lab` → `active_employees_vw`
 # MAGIC 3. Click the **Lineage** tab
-# MAGIC 4. See upstream tables: `employees`, `departments`
-# MAGIC
-# MAGIC ```
-# MAGIC  employees ──────────┐
-# MAGIC                       ├──▶ active_employees_vw
-# MAGIC  departments ─────────┘
-# MAGIC
-# MAGIC  raw_files (Volume) ──▶ read_files() ──▶ (your query)
-# MAGIC ```
-# MAGIC
-# MAGIC Lineage is also available programmatically via system tables.
+# MAGIC 4. See **upstream** sources: `employees`, `departments`
+# MAGIC 5. Click on `employees` → see its upstream (nothing in this lab) and downstream (the view)
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC -- Query lineage for our views (may need a few minutes to populate)
-# MAGIC SELECT source_table_full_name, target_table_full_name, created_by, event_time
+# MAGIC -- Programmatic lineage: what feeds into our view? (upstream)
+# MAGIC -- Note: may take a few minutes to populate after first query
+# MAGIC SELECT
+# MAGIC   source_table_full_name  AS upstream_source,
+# MAGIC   target_table_full_name  AS downstream_target,
+# MAGIC   created_by              AS triggered_by,
+# MAGIC   event_time
 # MAGIC FROM system.access.table_lineage
 # MAGIC WHERE target_table_full_name LIKE '%uc_fundamentals_lab%'
 # MAGIC ORDER BY event_time DESC
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC -- What does employees feed into? (downstream impact)
+# MAGIC SELECT
+# MAGIC   source_table_full_name  AS source,
+# MAGIC   target_table_full_name  AS feeds_into,
+# MAGIC   created_by,
+# MAGIC   event_time
+# MAGIC FROM system.access.table_lineage
+# MAGIC WHERE source_table_full_name LIKE '%uc_fundamentals_lab.employees%'
+# MAGIC ORDER BY event_time DESC
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC -- Column-level lineage: which source columns map to target columns?
+# MAGIC SELECT
+# MAGIC   source_table_full_name, source_column_name,
+# MAGIC   target_table_full_name, target_column_name
+# MAGIC FROM system.access.column_lineage
+# MAGIC WHERE source_table_full_name LIKE '%uc_fundamentals_lab.employees%'
+#    OR target_table_full_name LIKE '%uc_fundamentals_lab%'
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Impact Analysis Query Pattern
+# MAGIC
+# MAGIC Before making a breaking change (schema change, drop column), use this query
+# MAGIC to find everything downstream that would be affected:
+# MAGIC
+# MAGIC ```sql
+# MAGIC -- "What will break if I modify this table?"
+# MAGIC SELECT DISTINCT
+# MAGIC   target_table_full_name AS will_be_affected,
+# MAGIC   created_by             AS owned_by
+# MAGIC FROM system.access.table_lineage
+# MAGIC WHERE source_table_full_name = 'prod_catalog.bronze.orders_raw'
+# MAGIC ORDER BY target_table_full_name;
+# MAGIC ```
 
 # COMMAND ----------
 

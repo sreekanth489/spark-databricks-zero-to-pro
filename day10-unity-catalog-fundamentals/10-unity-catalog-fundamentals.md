@@ -18,6 +18,341 @@ After completing this session, you will be able to:
 
 ## Conceptual Overview
 
+### What is a Metastore?
+
+Before diving into Unity Catalog, we need to understand the fundamental concept that everything builds on: **what is a metastore, and why does it exist?**
+
+When you store data in cloud storage (S3, ADLS, GCS), you get a bucket full of files — Parquet files, Delta files, CSVs. The files contain the actual data. But files alone are not enough to run SQL queries. To query `SELECT * FROM employees`, the engine needs to know:
+
+- Where is the file physically stored? (`s3://my-bucket/hr/employees/`)
+- What is the schema? (columns: `id INT`, `name STRING`, `salary DOUBLE`)
+- What file format is it? (Delta, Parquet, CSV?)
+- Is it partitioned? How?
+- Who is allowed to read it?
+
+This **descriptive information about the data** — separate from the data itself — is called **metadata**. The system that stores and manages this metadata is called a **metastore**.
+
+```
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │                     THE TWO-PART MODEL OF A TABLE                       │
+  │                                                                          │
+  │                                                                          │
+  │   ┌────────────────────────────────┐                                    │
+  │   │         METASTORE              │   "What is the table?"             │
+  │   │   (metadata / DDL registry)    │                                    │
+  │   │                                │                                    │
+  │   │  Table: employees              │                                    │
+  │   │  Schema: id INT,               │                                    │
+  │   │          name STRING,          │                                    │
+  │   │          salary DOUBLE         │                                    │
+  │   │  Format: Delta                 │                                    │
+  │   │  Location: s3://hr/employees/  │                                    │
+  │   │  Partitioned by: department    │                                    │
+  │   │  Owner: alice@company.com      │                                    │
+  │   │  ACLs: analysts → SELECT       │                                    │
+  │   └──────────────┬─────────────────┘                                    │
+  │                  │                                                       │
+  │       Must be in SYNC                                                    │
+  │       (if out of sync → query fails or returns wrong results)           │
+  │                  │                                                       │
+  │   ┌──────────────▼─────────────────┐                                    │
+  │   │       CLOUD STORAGE            │   "Where is the actual data?"      │
+  │   │   (S3 / ADLS Gen2 / GCS)       │                                    │
+  │   │                                │                                    │
+  │   │  s3://my-bucket/hr/employees/  │                                    │
+  │   │  ├── part-00001.parquet        │                                    │
+  │   │  ├── part-00002.parquet        │                                    │
+  │   │  ├── _delta_log/              │                                    │
+  │   │  │   ├── 00000.json           │                                    │
+  │   │  │   └── 00001.json           │                                    │
+  │   │  └── part-00003.parquet        │                                    │
+  │   └────────────────────────────────┘                                    │
+  │                                                                          │
+  │  Query engine (Spark/SQL) reads BOTH:                                    │
+  │  1. Metastore → "WHERE is the data and WHAT does it look like?"         │
+  │  2. Cloud Storage → "Give me the actual rows"                           │
+  │                                                                          │
+  │  ⚠  If metadata and data files are OUT OF SYNC:                         │
+  │     - DROP TABLE without deleting files → "ghost files" wasting storage │
+  │     - Files added directly to S3 without metastore update → invisible   │
+  │     - Schema change in metastore but not in files → read errors         │
+  └─────────────────────────────────────────────────────────────────────────┘
+```
+
+> **Image Concept Credit**: Databricks documentation — how table metadata and physical storage relate
+> Reference: https://docs.databricks.com/en/data-governance/unity-catalog/index.html
+> Credit: Databricks, Inc.
+
+This is the core insight: **a table is not just data in storage — it is data + metadata, and both must be kept in sync.**
+
+---
+
+### The Evolution of Metastores
+
+#### Phase 1: Apache Hive Metastore (HMS)
+
+The original open-source metastore from the Apache Hive project. It stores metadata in a relational database (MySQL, PostgreSQL, Derby). Databricks used it as the default before Unity Catalog.
+
+```
+  ┌───────────────────────────────────────────────────────────────────────┐
+  │                    APACHE HIVE METASTORE                               │
+  │                                                                         │
+  │  ┌──────────────────────────────────────────────────────────────────┐  │
+  │  │  HMS Database (MySQL / PostgreSQL / Derby)                        │  │
+  │  │                                                                   │  │
+  │  │  DATABASES (Schemas)                                              │  │
+  │  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐           │  │
+  │  │  │  hr_db        │  │  finance_db  │  │  sales_db    │           │  │
+  │  │  │  ──────────── │  │  ──────────  │  │  ──────────  │           │  │
+  │  │  │  employees    │  │  accounts    │  │  orders      │           │  │
+  │  │  │  departments  │  │  ledger      │  │  customers   │           │  │
+  │  │  └──────────────┘  └──────────────┘  └──────────────┘           │  │
+  │  │                                                                   │  │
+  │  │  For each table: location, schema, format, partitions, stats     │  │
+  │  └──────────────────────────────────────────────────────────────────┘  │
+  │                  │                                                       │
+  │                  │ Points to                                             │
+  │                  ▼                                                       │
+  │  ┌──────────────────────────────────────────────────────────────────┐  │
+  │  │  Cloud Storage (S3 / ADLS / GCS / HDFS)                          │  │
+  │  │  Actual Parquet / ORC / Delta data files                         │  │
+  │  └──────────────────────────────────────────────────────────────────┘  │
+  │                                                                         │
+  │  Scope: ONE workspace (workspace-local)                                 │
+  │  Users & ACLs: workspace-local only                                     │
+  │  Namespace: schema.table (2-level)                                      │
+  │  Governed objects: tables, views, functions only                        │
+  │  Lineage: NONE                                                          │
+  │  Audit: NONE                                                            │
+  └───────────────────────────────────────────────────────────────────────┘
+```
+
+**What HMS does well**: Simple, open-source, compatible with Hive/Spark/Trino/Presto.
+
+**What HMS lacks**:
+- Workspace-isolated — no cross-workspace sharing
+- No user/group governance at the account level
+- No lineage, no audit logs
+- No governance for files, ML models, or volumes
+- 2-level namespace (schema.table) — no environment separation
+
+#### Phase 2: Unity Catalog Metastore
+
+Unity Catalog replaces the Hive Metastore with an account-level, cloud-native metastore that governs all data and AI assets across every workspace and cloud.
+
+```
+  ┌───────────────────────────────────────────────────────────────────────┐
+  │                   UNITY CATALOG METASTORE                              │
+  │                                                                         │
+  │  ┌──────────────────────────────────────────────────────────────────┐  │
+  │  │  UC Metastore (Databricks-managed, account-level, per region)    │  │
+  │  │                                                                   │  │
+  │  │  ┌────────────────┐ ┌──────────────┐ ┌────────────┐ ┌────────┐  │  │
+  │  │  │   Object       │ │  Access      │ │  Lineage   │ │ Audit  │  │  │
+  │  │  │   Metadata     │ │  Control     │ │  Graph     │ │  Logs  │  │  │
+  │  │  │  (catalogs,    │ │  (ACLs,      │ │  (tables → │ │ (who   │  │  │
+  │  │  │   schemas,     │ │   row filter,│ │   jobs →   │ │  did   │  │  │
+  │  │  │   tables,      │ │   col masks) │ │   dashbds) │ │  what, │  │  │
+  │  │  │   volumes,     │ │              │ │            │ │  when) │  │  │
+  │  │  │   models)      │ │              │ │            │ │        │  │  │
+  │  │  └────────────────┘ └──────────────┘ └────────────┘ └────────┘  │  │
+  │  │                                                                   │  │
+  │  │  Managed Storage Root                                             │  │
+  │  │  abfss://uc-root@storage.dfs.core.windows.net/  (Azure)          │  │
+  │  │  s3://uc-metastore-bucket/                       (AWS)            │  │
+  │  └──────────────────────────────────────────────────────────────────┘  │
+  │                         │                                               │
+  │       Points to                                                         │
+  │                         ▼                                               │
+  │  ┌──────────────────────────────────────────────────────────────────┐  │
+  │  │  Cloud Storage (S3 / ADLS / GCS)                                 │  │
+  │  │  Data files for managed AND external tables                      │  │
+  │  └──────────────────────────────────────────────────────────────────┘  │
+  │                                                                         │
+  │  Scope: Account-level, across ALL workspaces in a region               │
+  │  Users & ACLs: Account-level (synced from Azure AD / Okta via SCIM)    │
+  │  Namespace: catalog.schema.table (3-level)                             │
+  │  Governed objects: tables, views, volumes, functions, models, shares   │
+  │  Lineage: AUTOMATIC                                                     │
+  │  Audit: FULL (queryable via system.access.audit)                       │
+  └───────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+### Hive Metastore vs Unity Catalog — Side by Side
+
+```
+  ┌────────────────────────────────────────────────────────────────────────┐
+  │              HIVE METASTORE              │        UNITY CATALOG         │
+  ├──────────────────────────────────────────┼──────────────────────────────┤
+  │  Metadata storage:                        │  Metadata storage:           │
+  │  MySQL/PostgreSQL/Derby DB               │  Databricks-managed cloud    │
+  │                                           │  service (per region)        │
+  ├──────────────────────────────────────────┼──────────────────────────────┤
+  │  Scope: ONE workspace                    │  Scope: ALL workspaces        │
+  │  (workspace-local, isolated)             │  in the region (shared)      │
+  ├──────────────────────────────────────────┼──────────────────────────────┤
+  │  Namespace: schema.table                 │  Namespace: catalog.schema    │
+  │  (2-level)                               │  .table (3-level)             │
+  ├──────────────────────────────────────────┼──────────────────────────────┤
+  │  Users: workspace-local                  │  Users: account-level         │
+  │  Must recreate per workspace             │  Sync once, use everywhere    │
+  ├──────────────────────────────────────────┼──────────────────────────────┤
+  │  Governed objects:                       │  Governed objects:            │
+  │  Tables, Views, Functions                │  Tables, Views, Volumes,      │
+  │                                           │  Functions, Models, Shares    │
+  ├──────────────────────────────────────────┼──────────────────────────────┤
+  │  File governance: NONE                   │  File governance: Volumes     │
+  │  (S3 IAM = full access)                  │  (GRANT READ/WRITE VOLUME)   │
+  ├──────────────────────────────────────────┼──────────────────────────────┤
+  │  Lineage: NONE                           │  Lineage: AUTOMATIC           │
+  ├──────────────────────────────────────────┼──────────────────────────────┤
+  │  Audit logs: NONE                        │  Audit logs: FULL             │
+  │                                           │  (system.access.audit)       │
+  ├──────────────────────────────────────────┼──────────────────────────────┤
+  │  Row-level security:                     │  Row-level security:          │
+  │  Dynamic views only                      │  Native Row Filters           │
+  │                                           │  (ALTER TABLE SET ROW FILTER) │
+  ├──────────────────────────────────────────┼──────────────────────────────┤
+  │  Column masking:                         │  Column masking:              │
+  │  Dynamic views only                      │  Native Column Masks          │
+  │                                           │  (ALTER COLUMN SET MASK)     │
+  ├──────────────────────────────────────────┼──────────────────────────────┤
+  │  Still accessible in UC via:             │                              │
+  │  hive_metastore.schema.table             │                              │
+  └──────────────────────────────────────────┴──────────────────────────────┘
+```
+
+---
+
+### Data Lineage Deep Dive
+
+**Lineage** answers the question: *"Where did this data come from, and where does it go?"*
+
+This is critical for:
+- **Impact analysis** — "If I change this source table, what downstream reports break?"
+- **Root cause analysis** — "This dashboard shows wrong numbers — which upstream table is the problem?"
+- **Compliance** — "Show me every place this customer's PII flows to"
+- **Trust** — "Can I trust this Gold table? Where was it derived from?"
+
+#### Lineage: Before Unity Catalog
+
+```
+  BEFORE UNITY CATALOG — No Automated Lineage
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │                                                                      │
+  │  You had to manually document this in a spreadsheet or wiki:        │
+  │                                                                      │
+  │  "orders_bronze" → (notebook: transform_orders.py, Job #442)        │
+  │    → "orders_silver" → (notebook: aggregate.py, Job #443)           │
+  │      → "sales_gold" → (dashboard: Monthly Sales)                    │
+  │                     → (ML model: revenue_forecast_v2)               │
+  │                                                                      │
+  │  Problems:                                                           │
+  │  ✗ Manual — always out of date                                      │
+  │  ✗ Incomplete — people forget to document                           │
+  │  ✗ Hard to query — "which jobs read orders_bronze?"                 │
+  │  ✗ No column-level lineage                                          │
+  └─────────────────────────────────────────────────────────────────────┘
+```
+
+#### Lineage: With Unity Catalog
+
+Unity Catalog captures lineage **automatically** — every SQL query, notebook run, and job execution is tracked.
+
+```
+  WITH UNITY CATALOG — Automatic Lineage Capture
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │                                                                      │
+  │  [Volume: raw/orders.csv]                                           │
+  │           │                                                          │
+  │           │ read_files() in notebook "ingest_orders"                │
+  │           ▼                                                          │
+  │  [Table: bronze.orders_raw]                                         │
+  │           │                                                          │
+  │           │ SQL transform in job "daily_silver_refresh"             │
+  │           ▼                                                          │
+  │  [Table: silver.orders_clean]                                       │
+  │           │                                                          │
+  │           │ CTAS in job "gold_aggregation"                          │
+  │           ▼                                                          │
+  │  [Table: gold.sales_summary]                                        │
+  │           │                           │                             │
+  │           │ used by                   │ used by                     │
+  │           ▼                           ▼                             │
+  │  [Dashboard: Monthly Sales]    [ML Model: revenue_forecast_v3]     │
+  │                                                                      │
+  │  Also tracked:                                                       │
+  │  • Column-level lineage — which source columns feed target columns  │
+  │  • Which notebooks/jobs/queries created each version                │
+  │  • When each operation ran                                          │
+  └─────────────────────────────────────────────────────────────────────┘
+```
+
+> **Image Reference**: Unity Catalog data lineage UI
+> Source: https://docs.databricks.com/en/data-governance/unity-catalog/data-lineage.html
+> Credit: Databricks, Inc.
+
+#### What Lineage Captures
+
+| Source | Lineage Tracked |
+|--------|----------------|
+| SQL queries | Table → Table reads/writes |
+| Notebooks | All SQL cells, DataFrame reads/writes |
+| Jobs | All tasks in the job |
+| Dashboards | Queries backing each widget |
+| ML models (MLflow) | Feature tables used for training |
+| Delta Live Tables | Full pipeline lineage automatically |
+
+#### Viewing Lineage
+
+**In the UI**:
+1. Open **Catalog Explorer** (left sidebar → Catalog icon)
+2. Navigate to any table
+3. Click the **Lineage** tab
+4. See upstream tables (where data came from) and downstream tables (where data goes)
+
+**Programmatically** via system tables:
+```sql
+-- Tables that READ from our bronze table (downstream)
+SELECT source_table_full_name, target_table_full_name,
+       created_by, event_time
+FROM system.access.table_lineage
+WHERE source_table_full_name = 'prod_catalog.bronze.orders_raw'
+ORDER BY event_time DESC;
+
+-- Everything that feeds into our gold table (upstream)
+SELECT source_table_full_name, target_table_full_name,
+       created_by, event_time
+FROM system.access.table_lineage
+WHERE target_table_full_name = 'prod_catalog.gold.sales_summary'
+ORDER BY event_time DESC;
+
+-- Column-level lineage
+SELECT source_table_full_name, source_column_name,
+       target_table_full_name, target_column_name
+FROM system.access.column_lineage
+WHERE target_table_full_name = 'prod_catalog.gold.sales_summary';
+```
+
+#### Lineage for Impact Analysis
+
+```sql
+-- "I'm about to change the schema of bronze.orders_raw.
+--  What tables/jobs depend on it? Would they break?"
+
+SELECT DISTINCT
+  target_table_full_name AS depends_on_orders_raw,
+  created_by             AS written_by_job_or_user,
+  event_time
+FROM system.access.table_lineage
+WHERE source_table_full_name = 'prod_catalog.bronze.orders_raw'
+ORDER BY target_table_full_name;
+```
+
+---
+
 ### The World Before Unity Catalog
 
 In the pre-Unity Catalog era, every Databricks workspace was an island. Governance was hard, chaotic, and error-prone.
