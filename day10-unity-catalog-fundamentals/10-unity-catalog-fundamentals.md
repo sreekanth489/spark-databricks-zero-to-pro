@@ -373,6 +373,18 @@ In the pre-Unity Catalog era, every Databricks workspace was an island. Governan
 
 ### The World With Unity Catalog
 
+Unity Catalog sits as a single governance layer across everything — Databricks workloads above it and cloud storage / federated sources below it:
+
+![Databricks Lakehouse unifies data and AI governance — Unity Catalog as the central governance layer](../resources/images/databricks-lakehouse-unity-catalog.png)
+
+> *Credit: Databricks, Inc. — "Databricks Lakehouse unifies data and AI governance"*
+>
+> The diagram shows Unity Catalog at the centre:
+> - **Above**: BI & Data Warehousing, Data Engineering, Data Streaming, Data Science & ML, DatabricksIQ, and external compute (Athena, EMR, Trino, Spark, Presto)
+> - **Below**: Cloud Data Lake (ADLS, S3, GCS), Catalog Federation (Hive, AWS Glue), Data Federation (Redshift, Snowflake, BigQuery, MySQL, Synapse, PostgreSQL, SQL Azure)
+>
+> One governance model for **all** of them — structured, semi-structured, unstructured data + AI.
+
 ```
   ┌─────────────────────────────────────────────────────────────────────┐
   │                      WITH UNITY CATALOG                             │
