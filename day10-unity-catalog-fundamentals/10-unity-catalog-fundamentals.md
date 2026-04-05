@@ -22,66 +22,52 @@ After completing this session, you will be able to:
 
 Before diving into Unity Catalog, we need to understand the fundamental concept that everything builds on: **what is a metastore, and why does it exist?**
 
-When you store data in cloud storage (S3, ADLS, GCS), you get a bucket full of files — Parquet files, Delta files, CSVs. The files contain the actual data. But files alone are not enough to run SQL queries. To query `SELECT * FROM employees`, the engine needs to know:
+When you store data in cloud storage (S3, ADLS, GCS), you get a bucket full of files — Parquet files, Delta files, CSVs. The files contain the actual data. But files alone are not enough to run SQL queries. To query `SELECT * FROM orders`, the engine needs to know:
 
-- Where is the file physically stored? (`s3://my-bucket/hr/employees/`)
-- What is the schema? (columns: `id INT`, `name STRING`, `salary DOUBLE`)
+- Where is the file physically stored? (`s3://databricks/orders`)
+- What is the schema? (columns, types)
 - What file format is it? (Delta, Parquet, CSV?)
-- Is it partitioned? How?
 - Who is allowed to read it?
 
 This **descriptive information about the data** — separate from the data itself — is called **metadata**. The system that stores and manages this metadata is called a **metastore**.
 
+![Metastore concept: user query hits the metastore (DDL/schema), which points to actual data files in S3/ADLS](../resources/images/metastore-concept.png)
+
+> *Diagram: User query → Metastore (Table DDL/Schema) → Cloud Storage (s3/adls)*
+> *Credit: Sreekanth Keerthipati*
+
+The diagram above captures the essential model:
+
 ```
-  ┌─────────────────────────────────────────────────────────────────────────┐
-  │                     THE TWO-PART MODEL OF A TABLE                       │
-  │                                                                          │
-  │                                                                          │
-  │   ┌────────────────────────────────┐                                    │
-  │   │         METASTORE              │   "What is the table?"             │
-  │   │   (metadata / DDL registry)    │                                    │
-  │   │                                │                                    │
-  │   │  Table: employees              │                                    │
-  │   │  Schema: id INT,               │                                    │
-  │   │          name STRING,          │                                    │
-  │   │          salary DOUBLE         │                                    │
-  │   │  Format: Delta                 │                                    │
-  │   │  Location: s3://hr/employees/  │                                    │
-  │   │  Partitioned by: department    │                                    │
-  │   │  Owner: alice@company.com      │                                    │
-  │   │  ACLs: analysts → SELECT       │                                    │
-  │   └──────────────┬─────────────────┘                                    │
-  │                  │                                                       │
-  │       Must be in SYNC                                                    │
-  │       (if out of sync → query fails or returns wrong results)           │
-  │                  │                                                       │
-  │   ┌──────────────▼─────────────────┐                                    │
-  │   │       CLOUD STORAGE            │   "Where is the actual data?"      │
-  │   │   (S3 / ADLS Gen2 / GCS)       │                                    │
-  │   │                                │                                    │
-  │   │  s3://my-bucket/hr/employees/  │                                    │
-  │   │  ├── part-00001.parquet        │                                    │
-  │   │  ├── part-00002.parquet        │                                    │
-  │   │  ├── _delta_log/              │                                    │
-  │   │  │   ├── 00000.json           │                                    │
-  │   │  │   └── 00001.json           │                                    │
-  │   │  └── part-00003.parquet        │                                    │
-  │   └────────────────────────────────┘                                    │
-  │                                                                          │
-  │  Query engine (Spark/SQL) reads BOTH:                                    │
-  │  1. Metastore → "WHERE is the data and WHAT does it look like?"         │
-  │  2. Cloud Storage → "Give me the actual rows"                           │
-  │                                                                          │
-  │  ⚠  If metadata and data files are OUT OF SYNC:                         │
-  │     - DROP TABLE without deleting files → "ghost files" wasting storage │
-  │     - Files added directly to S3 without metastore update → invisible   │
-  │     - Schema change in metastore but not in files → read errors         │
-  └─────────────────────────────────────────────────────────────────────────┘
+  User Query
+      │
+      ▼
+  ┌───────────────────────────┐
+  │  Metastore                │   ← "What does this table look like?"
+  │  Table: orders            │
+  │  DDL / Schema             │     columns, types, format, partitions,
+  │  (Table definition)       │     owner, ACLs, row filters, col masks
+  └─────────────┬─────────────┘
+                │
+                │  points to physical location
+                ▼
+  ┌───────────────────────────┐
+  │  s3 / adls                │   ← "Where is the actual data?"
+  │  s3://databricks/orders   │
+  │  (Data files)             │     Delta / Parquet files on disk
+  └───────────────────────────┘
 ```
 
-> **Image Concept Credit**: Databricks documentation — how table metadata and physical storage relate
-> Reference: https://docs.databricks.com/en/data-governance/unity-catalog/index.html
-> Credit: Databricks, Inc.
+**Both must exist and stay in sync.** The query engine (Spark) reads the metastore first to find the location and schema, then reads the data files. If they fall out of sync:
+
+| Out-of-sync scenario | Consequence |
+|----------------------|-------------|
+| Files deleted from S3, metastore not updated | Query fails: "file not found" |
+| Files added to S3 directly, metastore not updated | New files invisible to SQL queries |
+| Schema changed in metastore, files not updated | Read errors or wrong column types |
+| Table dropped from metastore, files left in S3 | "Ghost files" — orphaned storage costs |
+
+This is exactly why **managed tables** in Unity Catalog are valuable: UC keeps both in sync automatically. Drop the table → UC deletes both the metadata AND the data files together.
 
 This is the core insight: **a table is not just data in storage — it is data + metadata, and both must be kept in sync.**
 

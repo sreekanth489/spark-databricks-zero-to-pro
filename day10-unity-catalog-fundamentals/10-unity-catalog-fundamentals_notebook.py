@@ -55,40 +55,32 @@
 # MAGIC
 # MAGIC ## Foundation: What is a Metastore?
 # MAGIC
+# MAGIC See the concept diagram in the guide: `../resources/images/metastore-concept.png`
+# MAGIC *(Credit: Sreekanth Keerthipati)*
+# MAGIC
 # MAGIC A table has TWO parts — both must exist and stay in sync:
 # MAGIC
 # MAGIC ```
-# MAGIC ┌──────────────────────────────────────────────────────────────────────┐
-# MAGIC │                      THE TWO-PART MODEL                              │
-# MAGIC │                                                                      │
-# MAGIC │   ┌─────────────────────────────────┐                               │
-# MAGIC │   │          METASTORE               │  ← "What is this table?"     │
-# MAGIC │   │   (metadata / DDL registry)      │                               │
-# MAGIC │   │                                  │                               │
-# MAGIC │   │  Table: employees                │                               │
-# MAGIC │   │  Columns: id INT, name STRING    │                               │
-# MAGIC │   │  Format: Delta                   │                               │
-# MAGIC │   │  Location: s3://hr/employees/    │                               │
-# MAGIC │   │  Owner: alice@company.com        │                               │
-# MAGIC │   │  ACLs: analysts → SELECT         │                               │
-# MAGIC │   └──────────────┬──────────────────┘                               │
-# MAGIC │                  │  ← must be in SYNC →                              │
-# MAGIC │   ┌──────────────▼──────────────────┐                               │
-# MAGIC │   │       CLOUD STORAGE             │  ← "Where is the data?"       │
-# MAGIC │   │   (S3 / ADLS Gen2 / GCS)        │                               │
-# MAGIC │   │                                  │                               │
-# MAGIC │   │  s3://my-bucket/hr/employees/    │                               │
-# MAGIC │   │  ├── part-00001.parquet          │                               │
-# MAGIC │   │  ├── _delta_log/00000.json       │                               │
-# MAGIC │   │  └── part-00002.parquet          │                               │
-# MAGIC │   └──────────────────────────────────┘                               │
-# MAGIC │                                                                      │
-# MAGIC │  Spark reads BOTH: metastore for schema/location, storage for rows  │
-# MAGIC │  Out of sync = query failure or wrong results                        │
-# MAGIC └──────────────────────────────────────────────────────────────────────┘
+# MAGIC   User Query
+# MAGIC       │
+# MAGIC       ▼
+# MAGIC   ┌────────────────────────────┐
+# MAGIC   │  Metastore                 │  ← Table DDL / Schema
+# MAGIC   │  Table: orders             │    columns, types, format,
+# MAGIC   │  (What does it look like?) │    location pointer, ACLs
+# MAGIC   └─────────────┬──────────────┘
+# MAGIC                 │  points to
+# MAGIC                 ▼
+# MAGIC   ┌────────────────────────────┐
+# MAGIC   │  s3 / adls                 │  ← Actual data files
+# MAGIC   │  s3://databricks/orders    │    Delta / Parquet on disk
+# MAGIC   │  (Where is the data?)      │
+# MAGIC   └────────────────────────────┘
 # MAGIC
-# MAGIC  Hive Metastore  → per workspace, 2-level namespace (schema.table)
-# MAGIC  Unity Catalog   → account-level, 3-level namespace (catalog.schema.table)
+# MAGIC   If OUT OF SYNC → query failures, ghost files, invisible data
+# MAGIC
+# MAGIC   Hive Metastore → per workspace, schema.table (2-level)
+# MAGIC   Unity Catalog  → account-level, catalog.schema.table (3-level)
 # MAGIC ```
 
 # COMMAND ----------
