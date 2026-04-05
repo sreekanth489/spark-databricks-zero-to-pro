@@ -1,5 +1,5 @@
 # Unity Catalog Security
-> Module: Data Governance | Day 11 | Level: Intermediate | Time: 90 min
+> Module: Data Governance | Day 11 | Level: Intermediate | Time: 120 min
 
 ## Learning Objectives
 
@@ -7,369 +7,697 @@ After completing this session, you will be able to:
 - Explain the Unity Catalog security model and how it differs from Hive Metastore
 - Manage identities: users, service principals, and groups
 - Grant, revoke, and deny privileges on data objects
-- Implement row-level security using dynamic views
-- Apply column masking to protect sensitive data
-- Understand identity federation and storage credentials
-- Configure data access control in production environments
+- Implement row-level security using **native Row Filters** (GA)
+- Apply **native Column Masks** to protect sensitive data (GA)
+- Understand the migration from regional dynamic views to native Row Filters
+- Configure storage credentials and external locations
+- Set up cross-workspace data access patterns
 
 ---
 
-## Conceptual Overview
+## The Security Problem Before Unity Catalog
 
-### The Hive Metastore Security Model (Legacy)
-
-In the traditional Hive Metastore, access control was limited:
+### How Access Was Managed Before
 
 ```
-Hive Metastore ACLs
-━━━━━━━━━━━━━━━━━━
-
-  GRANT privilege ON object TO user_or_group
-
-  Objects:  CATALOG | SCHEMA | TABLE | VIEW | FUNCTION | ANY FILE
-  Privileges: SELECT | MODIFY | CREATE | READ_METADATA | USAGE | ALL PRIVILEGES
+  BEFORE UNITY CATALOG — The "Regional Views" Pattern
+  ┌───────────────────────────────────────────────────────────────────┐
+  │                                                                    │
+  │  Problem: Different regions (APAC, EMEA, AMER) should only see   │
+  │  their own data. Also, PII columns must be hidden from analysts.  │
+  │                                                                    │
+  │  Solution teams used:                                             │
+  │                                                                    │
+  │  1. Create a BASE table with all data                             │
+  │     CREATE TABLE hive_metastore.sales.transactions (...)          │
+  │                                                                    │
+  │  2. Create REGIONAL VIEWS to filter rows                          │
+  │     CREATE VIEW apac_transactions_vw AS                           │
+  │       SELECT * FROM transactions WHERE region = 'APAC';          │
+  │     CREATE VIEW emea_transactions_vw AS                           │
+  │       SELECT * FROM transactions WHERE region = 'EMEA';          │
+  │     CREATE VIEW amer_transactions_vw AS                           │
+  │       SELECT * FROM transactions WHERE region = 'AMER';          │
+  │                                                                    │
+  │  3. Create MASKED VIEWS to hide PII columns                       │
+  │     CREATE VIEW transactions_masked_vw AS                         │
+  │       SELECT id,                                                  │
+  │              CASE WHEN current_user() = 'analyst@co.com'         │
+  │                   THEN '***-**-' || right(ssn,4)                 │
+  │                   ELSE ssn END AS ssn,                           │
+  │              amount FROM transactions;                            │
+  │                                                                    │
+  │  Problems with this approach:                                     │
+  │  ✗ N regions = N views to maintain                                │
+  │  ✗ When user changes group, views must be updated                │
+  │  ✗ Users need to KNOW which view to query                        │
+  │  ✗ Easy to accidentally bypass by querying base table            │
+  │  ✗ No governance on the view itself (who created it?)            │
+  │  ✗ Can't combine row+column security cleanly                     │
+  │  ✗ workspace-local: must duplicate in every workspace            │
+  └───────────────────────────────────────────────────────────────────┘
 ```
 
-**Limitations**:
-- Users and groups were workspace-local
-- No governance for files, ML models, or volumes
-- No cross-workspace access control
-- No automated lineage or audit logging
-- `USAGE` privilege required as a prerequisite for any action on database objects
-
-### The Unity Catalog Security Model
-
-Unity Catalog builds on the same GRANT/REVOKE SQL syntax but adds account-level identity, more securable objects, and finer-grained control.
+### The Unity Catalog Security Solution
 
 ```
-Unity Catalog Security Model
-━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  WITH UNITY CATALOG — Native Row Filters + Column Masks
+  ┌───────────────────────────────────────────────────────────────────┐
+  │                                                                    │
+  │  Same requirement — but now managed AT THE TABLE LEVEL            │
+  │                                                                    │
+  │  1. Create a row filter FUNCTION (once)                           │
+  │     CREATE FUNCTION region_filter(region STRING)                  │
+  │       RETURNS BOOLEAN                                             │
+  │       RETURN is_account_group_member('global_admins')             │
+  │           OR region = session_context('region');                  │
+  │                                                                    │
+  │  2. ATTACH it to the table (once)                                 │
+  │     ALTER TABLE transactions                                      │
+  │       SET ROW FILTER region_filter ON (region);                   │
+  │                                                                    │
+  │  3. Users query the TABLE DIRECTLY — filter is transparent        │
+  │     SELECT * FROM prod_catalog.sales.transactions;                │
+  │     -- Automatically filtered by user's region group!             │
+  │                                                                    │
+  │  Benefits:                                                        │
+  │  ✓ One function, one attachment — no N-views problem             │
+  │  ✓ Filter follows group membership (auto-updated)                │
+  │  ✓ Users query the TABLE, not a view — simpler mental model       │
+  │  ✓ Cannot be bypassed — filter applies to ALL queries             │
+  │  ✓ Works across workspaces — defined once at account level       │
+  │  ✓ Audited: who attached the filter, when, what function         │
+  └───────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## UC Security Model Overview
+
+```
+  Unity Catalog Security Model
+  ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
   GRANT privilege ON securable_object TO principal
 
-  Principals:
-  ┌────────────────────────────────────────────────┐
-  │  Users           (email-based, individual)     │
-  │  Service Principals (application ID, automated)│
-  │  Groups          (collections of above)        │
-  └────────────────────────────────────────────────┘
+  Principals (WHO)
+  ┌─────────────────────────────────────────────────────┐
+  │  Users           individual email-based identities  │
+  │  Service Princ.  application IDs for automation     │
+  │  Groups          collections (can be nested)        │
+  └─────────────────────────────────────────────────────┘
 
-  Securable Objects:
-  ┌────────────────────────────────────────────────┐
-  │  METASTORE                                      │
-  │  └── CATALOG                                    │
-  │      └── SCHEMA                                 │
-  │          ├── TABLE                              │
-  │          ├── VIEW                               │
-  │          ├── VOLUME                             │
-  │          ├── FUNCTION                           │
-  │          └── MODEL                              │
-  │  STORAGE CREDENTIAL                             │
-  │  EXTERNAL LOCATION                              │
-  │  SHARE / RECIPIENT (Delta Sharing)              │
-  └────────────────────────────────────────────────┘
+  Securable Objects (WHERE)
+  ┌─────────────────────────────────────────────────────┐
+  │  METASTORE                                           │
+  │  └── CATALOG                                         │
+  │      └── SCHEMA                                      │
+  │          ├── TABLE / VIEW                            │
+  │          ├── VOLUME                                  │
+  │          ├── FUNCTION (incl. row filters, col masks) │
+  │          └── MODEL                                   │
+  │  STORAGE CREDENTIAL                                  │
+  │  EXTERNAL LOCATION                                   │
+  │  SHARE / RECIPIENT                                   │
+  └─────────────────────────────────────────────────────┘
 
-  Privileges:
-  ┌────────────────────────────────────────────────┐
-  │  CREATE, SELECT, MODIFY, EXECUTE               │
-  │  USE CATALOG, USE SCHEMA                       │
-  │  READ FILES, WRITE FILES                       │
-  │  READ VOLUME, WRITE VOLUME                     │
-  │  CREATE CATALOG, CREATE SCHEMA, CREATE TABLE   │
-  │  ALL PRIVILEGES                                │
-  └────────────────────────────────────────────────┘
+  Privileges (WHAT)
+  ┌─────────────────────────────────────────────────────┐
+  │  USE CATALOG, USE SCHEMA  (prerequisite chain)       │
+  │  SELECT, MODIFY           (data access)              │
+  │  CREATE TABLE/SCHEMA/CATALOG (creation rights)       │
+  │  READ VOLUME, WRITE VOLUME  (file access)            │
+  │  READ FILES, WRITE FILES    (external locations)     │
+  │  EXECUTE                    (functions/procedures)   │
+  │  APPLY TAG                  (tagging assets)         │
+  │  ALL PRIVILEGES             (shorthand for all above)│
+  └─────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Identities (Principals)
+## Privilege Prerequisite Chain
 
-Unity Catalog has three types of principals:
-
-### Users
-
-Individual people identified by their **email address**. Users can be assigned admin roles.
-
-### Service Principals
-
-Automated identities for tools and applications, identified by an **Application ID**. Used for CI/CD pipelines, scheduled jobs, and service-to-service access.
-
-### Groups
-
-Collections of users and service principals. Groups can be **nested** -- a parent group can contain other groups.
-
-```
-  Group: all_employees
-  ├── Group: engineering
-  │   ├── User: alice@company.com
-  │   ├── User: bob@company.com
-  │   └── Service Principal: cicd-bot
-  ├── Group: marketing
-  │   ├── User: carol@company.com
-  │   └── User: frank@company.com
-  └── Group: finance
-      ├── User: david@company.com
-      └── User: grace@company.com
-```
-
----
-
-## Identity Federation
-
-Before Unity Catalog, identities existed only at the workspace level. With **Identity Federation**, identities are created once at the **account level** and then assigned to one or more workspaces.
-
-```
-  Account Console (identity source of truth)
-  ┌──────────────────────────────────────────┐
-  │  Users: alice, bob, carol, david         │
-  │  Groups: engineering, marketing          │
-  │  Service Principals: cicd-bot            │
-  └──────────────────────────────────────────┘
-           │                    │
-      ┌────┴─────┐       ┌────┴─────┐
-      │ Workspace│       │ Workspace│
-      │    A     │       │    B     │
-      │(assigned)│       │(assigned)│
-      └──────────┘       └──────────┘
-```
-
-**Benefits**:
-- No duplicate identity management across workspaces
-- Single source of truth for all users and groups
-- Centralized admin via the Account Console
-
----
-
-## Privilege Hierarchy
-
-Privileges flow through the object hierarchy. Granting `SELECT` on a catalog implicitly grants `SELECT` on all schemas and tables within it.
-
-```
-  GRANT SELECT ON CATALOG prod_catalog TO analysts
-  │
-  └── Applies to ALL schemas in prod_catalog
-      └── Applies to ALL tables/views in those schemas
-```
-
-However, **USE CATALOG** and **USE SCHEMA** are required prerequisites:
+This is a critical concept for the exam and for production use:
 
 ```
   To SELECT from prod_catalog.hr_db.employees:
-  ┌──────────────────────────────────────────────────────┐
-  │  1. GRANT USE CATALOG ON CATALOG prod_catalog TO ... │
-  │  2. GRANT USE SCHEMA ON SCHEMA hr_db TO ...          │
-  │  3. GRANT SELECT ON TABLE employees TO ...           │
-  └──────────────────────────────────────────────────────┘
+
+  Step 1: USE CATALOG ON CATALOG prod_catalog    ← Navigate to catalog
+  Step 2: USE SCHEMA ON SCHEMA hr_db             ← Navigate to schema
+  Step 3: SELECT ON TABLE employees              ← Read the table
+
+  ┌──────────────────────────────────────────────────────────────────┐
+  │  USE CATALOG   ──▶  USE SCHEMA  ──▶  SELECT/MODIFY/etc.          │
+  │  (I can see the catalog)                                         │
+  │                     (I can see the schema)                       │
+  │                                           (I can read/write data)│
+  │                                                                  │
+  │  NOTE: USE CATALOG does NOT mean you can read data.              │
+  │  It only allows you to see that the catalog exists.              │
+  │  Same for USE SCHEMA — it does NOT grant data access.            │
+  └──────────────────────────────────────────────────────────────────┘
 ```
-
-`USE CATALOG` and `USE SCHEMA` do not grant any data access by themselves -- they only allow navigating to the object.
-
-### Privilege Types
-
-| Privilege | Description |
-|-----------|-------------|
-| `SELECT` | Read data from tables/views |
-| `MODIFY` | Insert, update, delete data |
-| `CREATE` | Create objects (tables, views, etc.) |
-| `USE CATALOG` | Navigate into a catalog |
-| `USE SCHEMA` | Navigate into a schema |
-| `READ FILES` | Read from external location |
-| `WRITE FILES` | Write to external location |
-| `READ VOLUME` | Read files in a volume |
-| `WRITE VOLUME` | Write files to a volume |
-| `EXECUTE` | Run user-defined functions |
-| `ALL PRIVILEGES` | Grant all of the above |
-
----
-
-## Ownership
-
-Every securable object in Unity Catalog has an **owner**. The owner has full control over the object, including the ability to grant/revoke privileges to others.
-
-```
-  Object Owner Can:
-  ├── GRANT privileges to other principals
-  ├── REVOKE privileges from other principals
-  ├── DROP the object
-  ├── ALTER the object
-  └── TRANSFER ownership to another principal
-```
-
-Ownership rules:
-- The creator of an object is its default owner
-- Ownership can be transferred: `ALTER TABLE t OWNER TO `group_name``
-- Metastore admins and catalog owners can override ownership
-
----
-
-## Granting Privileges by Role
-
-| Role | Can Grant Privileges On |
-|------|------------------------|
-| Metastore admin | All objects in the metastore |
-| Catalog owner | All objects in that catalog |
-| Schema owner | All objects in that schema |
-| Table/View owner | That specific table/view |
 
 ```sql
--- Metastore admin or catalog owner
-GRANT USE CATALOG ON CATALOG prod_catalog TO analysts;
-GRANT USE SCHEMA ON SCHEMA prod_catalog.hr_db TO analysts;
-GRANT SELECT ON TABLE prod_catalog.hr_db.employees TO analysts;
+-- Minimal set to give analysts read access
+GRANT USE CATALOG ON CATALOG prod_catalog TO `analysts`;
+GRANT USE SCHEMA ON SCHEMA prod_catalog.hr_db TO `analysts`;
+GRANT SELECT ON TABLE prod_catalog.hr_db.employees TO `analysts`;
 
--- Schema owner
-GRANT SELECT ON TABLE employees TO `analyst@company.com`;
+-- Shortcut: grant on schema gives SELECT on all tables in that schema
+GRANT USE CATALOG ON CATALOG prod_catalog TO `analysts`;
+GRANT USE SCHEMA, SELECT ON SCHEMA prod_catalog.hr_db TO `analysts`;
 
--- View permissions
-SHOW GRANTS ON TABLE employees;
-SHOW GRANTS ON SCHEMA hr_db;
-SHOW GRANTS `analyst@company.com`;
+-- Grant on catalog propagates down
+GRANT USE CATALOG, USE SCHEMA, SELECT ON CATALOG prod_catalog TO `analysts`;
 ```
 
 ---
 
-## Row-Level Security with Dynamic Views
+## Dynamic Views for Row/Column Security (Legacy Pattern)
 
-Unity Catalog does not have built-in row-level security (RLS), but you can implement it using **dynamic views** with the `current_user()` and `is_account_group_member()` functions.
+Dynamic views were the standard approach before native Row Filters. Understanding them is important because:
+- Many existing workspaces still use them
+- They are more flexible for complex logic
+- Still needed for Hive Metastore governance
+
+### Row-Level Security via Dynamic View
 
 ```sql
 -- Only show employees from the user's own department
-CREATE OR REPLACE VIEW secure_employees_vw AS
+CREATE OR REPLACE VIEW prod_catalog.hr_db.secure_employees_vw AS
 SELECT *
-FROM employees
-WHERE department = CASE
-    WHEN is_account_group_member('engineering') THEN 'Engineering'
-    WHEN is_account_group_member('marketing') THEN 'Marketing'
-    WHEN is_account_group_member('finance') THEN 'Finance'
-    WHEN is_account_group_member('hr') THEN 'HR'
-    WHEN is_account_group_member('admins') THEN department  -- admins see all
-    ELSE NULL
-END;
+FROM prod_catalog.hr_db.employees
+WHERE
+  CASE
+    WHEN is_account_group_member('admins') THEN true
+    WHEN is_account_group_member('engineering') AND department = 'Engineering' THEN true
+    WHEN is_account_group_member('marketing')   AND department = 'Marketing'   THEN true
+    WHEN is_account_group_member('finance')     AND department = 'Finance'     THEN true
+    WHEN is_account_group_member('hr')          AND department = 'HR'          THEN true
+    ELSE false
+  END;
+
+-- Grant on VIEW, not on TABLE
+GRANT SELECT ON VIEW prod_catalog.hr_db.secure_employees_vw TO `analysts`;
+-- Do NOT grant SELECT on prod_catalog.hr_db.employees to analysts
 ```
 
-Then grant `SELECT` on the view (not the underlying table) to users:
+### Column Masking via Dynamic View
 
 ```sql
-GRANT SELECT ON VIEW secure_employees_vw TO analysts;
--- Do NOT grant SELECT on the employees table directly
+CREATE OR REPLACE VIEW prod_catalog.hr_db.masked_employees_vw AS
+SELECT
+  employee_id,
+  first_name,
+  last_name,
+
+  -- Email: visible to HR and admins, masked for others
+  CASE
+    WHEN is_account_group_member('hr') OR is_account_group_member('admins')
+      THEN email
+    ELSE concat(left(email, 2), '***@***')
+  END AS email,
+
+  -- SSN: last 4 digits only unless HR/admin
+  CASE
+    WHEN is_account_group_member('hr') OR is_account_group_member('admins')
+      THEN ssn
+    ELSE concat('***-**-', right(ssn, 4))
+  END AS ssn,
+
+  department,
+
+  -- Salary: visible to finance, HR, and admins only
+  CASE
+    WHEN is_account_group_member('finance')
+      OR is_account_group_member('hr')
+      OR is_account_group_member('admins')
+      THEN salary
+    ELSE NULL
+  END AS salary
+
+FROM prod_catalog.hr_db.employees
+WHERE is_active = true;
+```
+
+### Limitations of Dynamic Views
+
+```
+  Dynamic View Limitations
+  ┌────────────────────────────────────────────────────────────────┐
+  │  ✗ Users must query the VIEW, not the TABLE                    │
+  │    → Mental overhead, documentation burden                     │
+  │                                                                │
+  │  ✗ If someone has SELECT on the base TABLE, view is bypassed   │
+  │    → Must carefully manage both table AND view grants          │
+  │                                                                │
+  │  ✗ Maintenance: logic duplicated across many views             │
+  │    → N regional views × M column masks = N×M views            │
+  │                                                                │
+  │  ✗ No single place to see "what security policies apply?"     │
+  │    → Must inspect each view definition individually            │
+  │                                                                │
+  │  ✗ Cannot stack: one view for rows, another for columns       │
+  │    → Combined security requires one complex view               │
+  └────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Column Masking with Dynamic Views
+## Native Row Filters (Current Best Practice)
 
-Protect sensitive columns (PII, salary, SSN) by creating views that mask data based on group membership.
+**Row Filters** are functions that are ATTACHED to a table and automatically applied to every query. No view required.
+
+```
+  How Row Filters Work
+  ┌────────────────────────────────────────────────────────────────┐
+  │                                                                │
+  │  SELECT * FROM employees;                                      │
+  │           │                                                    │
+  │           ▼                                                    │
+  │  ┌─────────────────────────────────────────────┐              │
+  │  │  Databricks SQL Engine                       │              │
+  │  │                                             │              │
+  │  │  1. Intercepts the query                    │              │
+  │  │  2. Evaluates row_filter_fn(department)     │              │
+  │  │     for current_user()                      │              │
+  │  │  3. Automatically adds WHERE clause         │              │
+  │  │  4. Returns only qualifying rows            │              │
+  │  └─────────────────────────────────────────────┘              │
+  │           │                                                    │
+  │           ▼                                                    │
+  │  Only rows the current user is allowed to see                  │
+  │  (transparent to the user — they query the TABLE directly)     │
+  └────────────────────────────────────────────────────────────────┘
+```
+
+### Implementing Native Row Filters
 
 ```sql
-CREATE OR REPLACE VIEW masked_employees_vw AS
-SELECT
-    employee_id,
-    first_name,
-    last_name,
-    -- Mask email for non-HR users
-    CASE
-        WHEN is_account_group_member('hr') THEN email
-        ELSE concat(left(email, 2), '***@***')
-    END AS email,
-    department,
-    -- Mask salary for non-finance users
-    CASE
-        WHEN is_account_group_member('finance') OR is_account_group_member('admins')
-        THEN salary
-        ELSE NULL
-    END AS salary
-FROM employees;
+-- Step 1: Create a row filter function
+-- The function must return BOOLEAN
+-- Parameters map to columns in the filtered table
+CREATE OR REPLACE FUNCTION prod_catalog.hr_db.dept_row_filter(dept STRING)
+RETURNS BOOLEAN
+RETURN
+  is_account_group_member('admins')          -- admins see all
+  OR is_account_group_member(lower(dept));   -- users see their dept rows
+
+-- Step 2: Attach the row filter to the table
+-- ON (dept) maps the column `department` to the function parameter `dept`
+ALTER TABLE prod_catalog.hr_db.employees
+  SET ROW FILTER prod_catalog.hr_db.dept_row_filter ON (department);
+
+-- Step 3: Grant EXECUTE on the function to users who query the table
+-- (They need to execute the filter function as part of their query)
+GRANT EXECUTE ON FUNCTION prod_catalog.hr_db.dept_row_filter
+  TO `analysts`;
+
+-- Now query the TABLE directly — filter is automatic
+SELECT * FROM prod_catalog.hr_db.employees;
+-- Engineering user sees only Engineering rows
+-- Finance user sees only Finance rows
+-- Admin sees all rows
+
+-- Step 4: Remove row filter when no longer needed
+ALTER TABLE prod_catalog.hr_db.employees DROP ROW FILTER;
 ```
 
+### Row Filter: Regional Data Pattern
+
+This replaces the old "create a view per region" pattern:
+
+```sql
+-- OLD WAY: 3 views (APAC, EMEA, AMER)
+CREATE VIEW apac_sales_vw AS SELECT * FROM sales WHERE region = 'APAC';
+CREATE VIEW emea_sales_vw AS SELECT * FROM sales WHERE region = 'EMEA';
+CREATE VIEW amer_sales_vw AS SELECT * FROM sales WHERE region = 'AMER';
+-- Users query different views, maintenance burden grows with regions
+
+-- NEW WAY: 1 row filter function + 1 table
+CREATE OR REPLACE FUNCTION prod_catalog.sales_db.region_row_filter(region_col STRING)
+RETURNS BOOLEAN
+RETURN
+  is_account_group_member('global_data_team')  -- global team sees all
+  OR is_account_group_member(concat(lower(region_col), '_team'));
+  -- apac_team sees APAC, emea_team sees EMEA, etc.
+
+ALTER TABLE prod_catalog.sales_db.transactions
+  SET ROW FILTER prod_catalog.sales_db.region_row_filter ON (region);
+
+-- ALL users query the SAME table — filter is transparent
+SELECT * FROM prod_catalog.sales_db.transactions;
+-- APAC team member sees only region='APAC' rows
+-- EMEA team member sees only region='EMEA' rows
+-- Global team sees all rows
 ```
-  User in 'hr' group sees:     alice@company.com, NULL salary
-  User in 'finance' group:     al***@***, 120000.0
-  User in 'admins' group:      alice@company.com, 120000.0
-  Regular user:                 al***@***, NULL
+
+---
+
+## Native Column Masks (Current Best Practice)
+
+**Column Masks** are functions that transform individual column values before returning them to the user. Applied at the column level on the table.
+
 ```
+  Column Mask Execution Flow
+  ┌────────────────────────────────────────────────────────────────┐
+  │                                                                │
+  │  SELECT employee_id, email, salary FROM employees;             │
+  │           │                                                    │
+  │           ▼                                                    │
+  │  For each row, for each masked column:                         │
+  │  ┌─────────────────────────────────────────────────────────┐  │
+  │  │  email column:   mask_email_fn(email)                   │  │
+  │  │    → HR user:    alice@company.com  (unmasked)          │  │
+  │  │    → Analyst:    al***@***          (masked)            │  │
+  │  │                                                         │  │
+  │  │  salary column:  mask_salary_fn(salary)                 │  │
+  │  │    → Finance:    120000.0           (unmasked)          │  │
+  │  │    → Analyst:    NULL               (masked)            │  │
+  │  └─────────────────────────────────────────────────────────┘  │
+  │                                                                │
+  │  User sees transformed values transparently                    │
+  └────────────────────────────────────────────────────────────────┘
+```
+
+### Implementing Native Column Masks
+
+```sql
+-- Step 1: Create masking functions
+-- Return type must match the column type being masked
+
+CREATE OR REPLACE FUNCTION prod_catalog.hr_db.mask_email(email_val STRING)
+RETURNS STRING
+RETURN
+  CASE
+    WHEN is_account_group_member('hr') OR is_account_group_member('admins')
+      THEN email_val
+    ELSE concat(left(email_val, 2), '***@***')
+  END;
+
+CREATE OR REPLACE FUNCTION prod_catalog.hr_db.mask_ssn(ssn_val STRING)
+RETURNS STRING
+RETURN
+  CASE
+    WHEN is_account_group_member('hr') OR is_account_group_member('admins')
+      THEN ssn_val
+    ELSE concat('***-**-', right(ssn_val, 4))
+  END;
+
+CREATE OR REPLACE FUNCTION prod_catalog.hr_db.mask_salary(salary_val DOUBLE)
+RETURNS DOUBLE
+RETURN
+  CASE
+    WHEN is_account_group_member('finance')
+      OR is_account_group_member('hr')
+      OR is_account_group_member('admins')
+      THEN salary_val
+    ELSE NULL
+  END;
+
+-- Step 2: Attach column masks to the table
+ALTER TABLE prod_catalog.hr_db.employees
+  ALTER COLUMN email   SET MASK prod_catalog.hr_db.mask_email;
+
+ALTER TABLE prod_catalog.hr_db.employees
+  ALTER COLUMN ssn     SET MASK prod_catalog.hr_db.mask_ssn;
+
+ALTER TABLE prod_catalog.hr_db.employees
+  ALTER COLUMN salary  SET MASK prod_catalog.hr_db.mask_salary;
+
+-- Step 3: Grant EXECUTE on masking functions
+GRANT EXECUTE ON FUNCTION prod_catalog.hr_db.mask_email   TO `analysts`;
+GRANT EXECUTE ON FUNCTION prod_catalog.hr_db.mask_ssn     TO `analysts`;
+GRANT EXECUTE ON FUNCTION prod_catalog.hr_db.mask_salary  TO `analysts`;
+
+-- Now all users query the TABLE directly — masking is automatic
+SELECT employee_id, email, ssn, salary FROM prod_catalog.hr_db.employees;
+-- HR user:      alice@company.com | 123-45-6789 | 120000.0
+-- Finance user: al***@***        | ***-**-6789 | 120000.0
+-- Analyst:      al***@***        | ***-**-6789 | NULL
+
+-- Step 4: Remove a column mask
+ALTER TABLE prod_catalog.hr_db.employees ALTER COLUMN email DROP MASK;
+```
+
+---
+
+## Migration: Regional Views → Native Row Filters
+
+For teams migrating from the old regional views pattern:
+
+```
+  Migration Strategy
+  ─────────────────
+
+  Phase 1: Identify (Audit existing views)
+  ┌────────────────────────────────────────────────────────────────┐
+  │  SELECT table_name, view_definition                            │
+  │  FROM information_schema.views                                 │
+  │  WHERE view_definition LIKE '%region%'                        │
+  │     OR view_definition LIKE '%current_user()%';               │
+  └────────────────────────────────────────────────────────────────┘
+
+  Phase 2: Create equivalent Row Filter functions
+  ┌────────────────────────────────────────────────────────────────┐
+  │  -- For each WHERE clause pattern in old views, create a fn   │
+  │  CREATE FUNCTION region_filter(r STRING)                       │
+  │  RETURNS BOOLEAN                                               │
+  │  RETURN is_account_group_member('global') OR                   │
+  │         is_account_group_member(lower(r));                    │
+  └────────────────────────────────────────────────────────────────┘
+
+  Phase 3: Attach to tables
+  ┌────────────────────────────────────────────────────────────────┐
+  │  ALTER TABLE transactions SET ROW FILTER region_filter ON (r);│
+  └────────────────────────────────────────────────────────────────┘
+
+  Phase 4: Update grants (grant on TABLE, revoke from views)
+  ┌────────────────────────────────────────────────────────────────┐
+  │  GRANT USE CATALOG, USE SCHEMA, SELECT ON TABLE transactions  │
+  │    TO `apac_team`, `emea_team`, `amer_team`;                  │
+  │  GRANT EXECUTE ON FUNCTION region_filter                       │
+  │    TO `apac_team`, `emea_team`, `amer_team`;                  │
+  └────────────────────────────────────────────────────────────────┘
+
+  Phase 5: Deprecate views (keep temporarily, then drop)
+  ┌────────────────────────────────────────────────────────────────┐
+  │  ALTER VIEW apac_sales_vw                                      │
+  │    SET TBLPROPERTIES ('deprecated' = 'true',                  │
+  │    'migrate_to' = 'transactions');                             │
+  │  -- After cutover:                                             │
+  │  DROP VIEW apac_sales_vw;                                      │
+  │  DROP VIEW emea_sales_vw;                                      │
+  │  DROP VIEW amer_sales_vw;                                      │
+  └────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Dynamic Views vs Native Row Filters vs Native Column Masks
+
+| Aspect | Dynamic Views | Native Row Filters | Native Column Masks |
+|--------|--------------|-------------------|---------------------|
+| Object type | VIEW | FUNCTION attached to TABLE | FUNCTION attached to COLUMN |
+| User experience | Query the VIEW | Query the TABLE | Query the TABLE |
+| Bypassable? | Yes (if user has TABLE SELECT) | No (always enforced) | No (always enforced) |
+| Maintenance | N views for N filter variations | 1 function, 1 ALTER TABLE | 1 function per column |
+| Stacking | Complex | Row filter + Column mask on same table | Multiple masks on diff columns |
+| Visibility | Hidden behind views | Visible in table metadata | Visible in column metadata |
+| Availability | All DBR versions | DBR 12.2+ (GA), UC required | DBR 12.2+ (GA), UC required |
 
 ---
 
 ## Storage Credentials and External Locations
 
-To access data in your cloud storage, Unity Catalog uses two objects:
+To access data in cloud storage, UC uses a two-layer model:
 
-### Storage Credentials
-
-A storage credential stores authentication info for a cloud storage container (IAM Role for AWS, Managed Identity for Azure, Service Account for GCP).
+```
+  Storage Credential
+  (Authentication — HOW to connect)
+  ┌──────────────────────────────────────────────────────────────┐
+  │  Azure: Access Connector for Azure Databricks (Managed ID)   │
+  │  AWS:   IAM Role ARN                                         │
+  │  GCP:   Service Account JSON key                             │
+  └──────────────────────────────────────────────────────────────┘
+                           │
+                           │ Used by
+                           ▼
+  External Location
+  (Path — WHAT path is accessible)
+  ┌──────────────────────────────────────────────────────────────┐
+  │  abfss://raw-data@mystorage.dfs.core.windows.net/bronze/     │
+  │  s3://my-data-lake/silver/                                   │
+  │  gs://my-gcs-bucket/gold/                                    │
+  └──────────────────────────────────────────────────────────────┘
+                           │
+                           │ Governed by
+                           ▼
+  GRANT READ FILES / WRITE FILES ON EXTERNAL LOCATION
+  (WHO can access the path)
+```
 
 ```sql
--- Created by metastore admin (typically via UI or Terraform)
-CREATE STORAGE CREDENTIAL my_s3_cred
+-- Create storage credential (Azure example)
+-- Usually done via UI or Terraform by metastore admin
+CREATE STORAGE CREDENTIAL azure_adls_cred
 WITH (
-    AWS_IAM_ROLE = 'arn:aws:iam::123456789:role/uc-access-role'
+  AZURE_MANAGED_IDENTITY = (
+    CREDENTIAL = '/subscriptions/<sub>/resourceGroups/<rg>/providers/
+                  Microsoft.Databricks/accessConnectors/uc-connector'
+  )
 );
-```
 
-### External Locations
+-- Validate the credential works
+VALIDATE STORAGE CREDENTIAL azure_adls_cred
+ON LOCATION 'abfss://data@mystorage.dfs.core.windows.net/';
 
-An external location maps a storage credential to a specific path in cloud storage.
+-- Create external location
+CREATE EXTERNAL LOCATION bronze_zone
+  URL 'abfss://raw@mystorage.dfs.core.windows.net/bronze/'
+  WITH (STORAGE CREDENTIAL azure_adls_cred)
+  COMMENT 'Bronze landing zone for raw ingestion';
 
-```sql
-CREATE EXTERNAL LOCATION my_raw_data
-URL 's3://my-bucket/raw-data/'
-WITH (STORAGE CREDENTIAL my_s3_cred);
-```
+-- Grant file access to data engineers
+GRANT READ FILES, WRITE FILES
+  ON EXTERNAL LOCATION bronze_zone
+  TO `data_engineers`;
 
-```
-  Storage Credential (IAM Role)
-  └── External Location 1: s3://bucket/raw/
-  └── External Location 2: s3://bucket/curated/
-  └── External Location 3: s3://bucket/archive/
-```
-
-You then grant `READ FILES` or `WRITE FILES` on external locations to control who can access cloud storage.
-
-```sql
-GRANT READ FILES ON EXTERNAL LOCATION my_raw_data TO data_engineers;
+-- Grant read-only to analysts
+GRANT READ FILES
+  ON EXTERNAL LOCATION bronze_zone
+  TO `analysts`;
 ```
 
 ---
 
-## Security Model Comparison
+## Complete Security Blueprint
 
-| Aspect | Hive Metastore | Unity Catalog |
-|--------|---------------|---------------|
-| Identity scope | Workspace | Account |
-| Identity types | Users, groups | Users, service principals, groups |
-| Securable objects | Catalog, schema, table, view, function | All above + volumes, models, credentials, locations, shares |
-| Prerequisite privilege | `USAGE` | `USE CATALOG` + `USE SCHEMA` |
-| File governance | `ANY FILE` (all or nothing) | `READ FILES` / `WRITE FILES` per external location |
-| Row-level security | Dynamic views | Dynamic views + `is_account_group_member()` |
-| Column masking | Dynamic views | Dynamic views (+ built-in masking policies in preview) |
-| Audit logging | Limited | Full audit trail |
-| Cross-workspace | Not possible | Built-in |
+A production security pattern for a multi-team lakehouse:
+
+```
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │  Production Security Architecture                                    │
+  │                                                                      │
+  │  Storage Layer                                                       │
+  │  ┌───────────────────────────────────────────────────────────────┐  │
+  │  │  External Locations (governed by Storage Credentials)         │  │
+  │  │  bronze_zone (READ FILES: de_team, READ FILES: ingestion_sp)  │  │
+  │  │  silver_zone (READ FILES: analysts, WRITE FILES: de_team)     │  │
+  │  │  gold_zone   (READ FILES: bi_team, SELECT: dashboard_sp)      │  │
+  │  └───────────────────────────────────────────────────────────────┘  │
+  │                                                                      │
+  │  Catalog Layer                                                       │
+  │  ┌───────────────────────────────────────────────────────────────┐  │
+  │  │  prod_catalog                                                  │  │
+  │  │  Owner: data_platform_team                                    │  │
+  │  │  USE CATALOG: all_employees                                   │  │
+  │  │                                                               │  │
+  │  │  ├── Schema: raw_db (data_engineers only)                     │  │
+  │  │  │   Owner: de_team                                           │  │
+  │  │  │   USE SCHEMA + SELECT: de_team                            │  │
+  │  │  │                                                            │  │
+  │  │  ├── Schema: curated_db (analysts read, DE write)             │  │
+  │  │  │   Owner: de_team                                           │  │
+  │  │  │   USE SCHEMA + SELECT: analysts, de_team                  │  │
+  │  │  │   MODIFY: de_team                                         │  │
+  │  │  │   Row Filter: region_filter ON region column              │  │
+  │  │  │   Column Mask: mask_ssn ON ssn, mask_salary ON salary     │  │
+  │  │  │                                                            │  │
+  │  │  └── Schema: reporting_db (BI reads only)                     │  │
+  │  │      Owner: de_team                                           │  │
+  │  │      USE SCHEMA + SELECT: analysts, bi_team, dashboard_sp    │  │
+  │  └───────────────────────────────────────────────────────────────┘  │
+  └─────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
-## Best Practices
+## Querying Existing Security Policies
 
-1. **Use groups, not individual users** -- assign privileges to groups for maintainability
-2. **Least privilege** -- grant only the minimum privileges needed
-3. **Use views for row/column security** -- don't give direct table access when masking is needed
-4. **Transfer ownership** -- assign table ownership to groups, not individual users
-5. **Separate catalogs by environment** -- `dev_catalog`, `staging_catalog`, `prod_catalog`
-6. **Use external locations** -- govern cloud storage access through UC, not IAM alone
-7. **Audit regularly** -- review `SHOW GRANTS` and system audit logs
+```sql
+-- View all grants on a table
+SHOW GRANTS ON TABLE prod_catalog.hr_db.employees;
+
+-- View all grants on a schema
+SHOW GRANTS ON SCHEMA prod_catalog.hr_db;
+
+-- View grants for a specific user or group
+SHOW GRANTS `analysts`;
+
+-- View grants on a storage credential
+SHOW GRANTS ON STORAGE CREDENTIAL azure_adls_cred;
+
+-- View row filters and column masks on a table
+DESCRIBE EXTENDED prod_catalog.hr_db.employees;
+-- Look for: Row Filter, Column Masks sections
+
+-- List all functions (including row filter / mask functions) in a schema
+SHOW FUNCTIONS IN prod_catalog.hr_db;
+
+-- Check which tables have row filters via information_schema
+SELECT table_catalog, table_schema, table_name, row_filter
+FROM prod_catalog.information_schema.tables
+WHERE row_filter IS NOT NULL;
+```
+
+---
+
+## Audit Logging via System Tables
+
+```sql
+-- See all permission changes (GRANT/REVOKE events)
+SELECT
+  event_time,
+  user_identity.email AS performed_by,
+  action_name,
+  request_params.securable_type,
+  request_params.securable_full_name,
+  request_params.changes
+FROM system.access.audit
+WHERE action_name IN ('grantPermission', 'revokePermission', 'updatePermissions')
+ORDER BY event_time DESC
+LIMIT 50;
+
+-- See who accessed sensitive tables
+SELECT
+  event_time,
+  user_identity.email,
+  action_name,
+  request_params.full_name_arg AS table_accessed
+FROM system.access.audit
+WHERE request_params.full_name_arg = 'prod_catalog.hr_db.employees'
+  AND action_name = 'getTable'
+ORDER BY event_time DESC;
+```
 
 ---
 
 ## Hands-On Walkthrough
 
-See the companion notebook: [`11-unity-catalog-security_notebook.py`](11-unity-catalog-security_notebook.py)
+### Lab 1 — Day 11 Main Notebook
+[`11-unity-catalog-security_notebook.py`](11-unity-catalog-security_notebook.py)
 
-The lab covers:
-1. Granting and revoking privileges on catalogs, schemas, and tables
-2. Implementing row-level security with dynamic views
-3. Implementing column masking with dynamic views
-4. Exploring the `is_account_group_member()` function
-5. Querying privilege grants with `SHOW GRANTS`
-6. Working with table ownership
+Covers:
+1. GRANT/REVOKE/SHOW GRANTS syntax
+2. Dynamic views for row-level security (legacy pattern)
+3. Dynamic views for column masking
+4. Combined row + column security view
+5. Reusable masking UDFs
+6. Table ownership management
+
+### Lab 2 — Row Filters and Column Masks (Native)
+[`11b-row-filters-column-masks_notebook.py`](11b-row-filters-column-masks_notebook.py)
+
+Covers:
+1. Creating row filter functions
+2. Attaching/detaching row filters to tables
+3. Creating column mask functions
+4. Attaching/detaching column masks
+5. Migration from dynamic views to native policies
+6. Inspecting applied policies via DESCRIBE EXTENDED
 
 ---
 
@@ -377,39 +705,41 @@ The lab covers:
 
 | Feature | AWS | Azure | GCP |
 |---------|-----|-------|-----|
-| Storage Credential type | IAM Role | Managed Identity / Service Principal | Service Account |
-| Identity provider | SCIM + AWS SSO | Azure AD (Entra ID) + SCIM | Google Identity + SCIM |
+| Storage Credential type | IAM Role ARN | Access Connector (Managed Identity) | Service Account JSON |
+| Identity provider | SCIM + AWS SSO / Okta | Azure AD (Entra ID) + SCIM | Google Identity + SCIM |
 | Account console | accounts.cloud.databricks.com | accounts.azuredatabricks.net | accounts.gcp.databricks.com |
-| External location storage | S3 paths | ABFSS paths | GCS paths |
+| External location path | `s3://bucket/path/` | `abfss://container@account.dfs.core.windows.net/path/` | `gs://bucket/path/` |
+| Storage permission for UC | `s3:GetObject`, `s3:PutObject` on bucket | Storage Blob Data Contributor on ADLS | Storage Object Admin on GCS |
 
 ---
 
 ## Certification Tip
 
-The **Databricks Certified Data Engineer Associate** exam tests:
-- GRANT/REVOKE/DENY syntax and behavior
-- `USE CATALOG` and `USE SCHEMA` as prerequisites
+**Databricks Certified Data Engineer Associate / Professional** exams test:
+- GRANT/REVOKE/DENY syntax and the prerequisite chain (`USE CATALOG` → `USE SCHEMA` → `SELECT`)
 - Difference between Hive Metastore ACLs and Unity Catalog privileges
-- Ownership and who can grant privileges (metastore admin, catalog owner, schema owner)
-- Dynamic views for row-level security and column masking
-- `is_account_group_member()` function
+- Ownership and who can grant privileges (metastore admin, catalog owner, schema owner, object owner)
+- Dynamic views for row-level security using `is_account_group_member()`
 - Storage credentials and external locations
+- Native Row Filters and Column Masks (DBR 12.2+)
+- `current_user()` and `is_account_group_member()` functions
 
 ---
 
 ## Key Takeaways
 
-1. Unity Catalog uses **account-level identities** (users, service principals, groups) with identity federation
-2. The security model uses **GRANT/REVOKE on securable objects** with a hierarchy from metastore down to table
-3. **USE CATALOG** and **USE SCHEMA** are required prerequisites to access any object within
-4. **Dynamic views** with `is_account_group_member()` implement row-level security and column masking
-5. **Storage credentials** and **external locations** govern cloud storage access through Unity Catalog
-6. **Ownership** determines who can manage and grant access to objects
-7. Always prefer **groups over individual users** for privilege management
+1. **Before UC**: Regional views were the only way to filter rows — N regions = N views = maintenance burden
+2. **Native Row Filters**: Attach a function to a TABLE — filter is transparent, cannot be bypassed
+3. **Native Column Masks**: Attach a masking function to a COLUMN — transforms values transparently
+4. **Migration path**: View the WHERE clause logic in old views → create Row Filter functions → ALTER TABLE SET ROW FILTER → update grants
+5. **Prerequisite chain**: `USE CATALOG` → `USE SCHEMA` → `SELECT` (each step required)
+6. **Storage Credentials + External Locations**: Two-layer model to govern cloud storage access
+7. **Audit logs**: Query `system.access.audit` to see who accessed/changed what
+8. **Groups over individuals**: Always assign privileges to groups, not individual users
 
 ---
 
 ## Next Steps
 
-- [Day 12: Managed vs External Tables](../day12-managed-vs-external-tables/) -- deep dive into table types and storage
-- [Day 13: Volumes in Databricks](../day13-volumes-in-databricks/) -- governed file access patterns
+- [Day 12: Managed vs External Tables](../day12-managed-vs-external-tables/) — deep dive into table types
+- [Day 13: Volumes in Databricks](../day13-volumes-in-databricks/) — governed file access patterns
