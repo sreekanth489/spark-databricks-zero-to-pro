@@ -23,21 +23,20 @@ After completing this session, you will be able to:
   BEFORE UNITY CATALOG — The "Regional Views" Pattern
   ┌───────────────────────────────────────────────────────────────────┐
   │                                                                    │
-  │  Problem: Different regions (APAC, EMEA, AMER) should only see   │
-  │  their own data. Also, PII columns must be hidden from analysts.  │
+  │  Problem: Different divisions (mid_west, west_division) should    │
+  │  only see their own data. Also, PII columns must be hidden from   │
+  │  division users — only admin1 sees full data.                     │
   │                                                                    │
   │  Solution teams used:                                             │
   │                                                                    │
   │  1. Create a BASE table with all data                             │
   │     CREATE TABLE hive_metastore.sales.transactions (...)          │
   │                                                                    │
-  │  2. Create REGIONAL VIEWS to filter rows                          │
-  │     CREATE VIEW apac_transactions_vw AS                           │
-  │       SELECT * FROM transactions WHERE region = 'APAC';          │
-  │     CREATE VIEW emea_transactions_vw AS                           │
-  │       SELECT * FROM transactions WHERE region = 'EMEA';          │
-  │     CREATE VIEW amer_transactions_vw AS                           │
-  │       SELECT * FROM transactions WHERE region = 'AMER';          │
+  │  2. Create DIVISION VIEWS to filter rows                          │
+  │     CREATE VIEW mid_west_transactions_vw AS                       │
+  │       SELECT * FROM transactions WHERE region = 'mid_west';      │
+  │     CREATE VIEW west_division_transactions_vw AS                  │
+  │       SELECT * FROM transactions WHERE region = 'west_division'; │
   │                                                                    │
   │  3. Create MASKED VIEWS to hide PII columns                       │
   │     CREATE VIEW transactions_masked_vw AS                         │
@@ -69,8 +68,8 @@ After completing this session, you will be able to:
   │  1. Create a row filter FUNCTION (once)                           │
   │     CREATE FUNCTION region_filter(region STRING)                  │
   │       RETURNS BOOLEAN                                             │
-  │       RETURN is_account_group_member('global_admins')             │
-  │           OR region = session_context('region');                  │
+  │       RETURN is_account_group_member('admin1')                    │
+  │           OR is_account_group_member(lower(region));                  │
   │                                                                    │
   │  2. ATTACH it to the table (once)                                 │
   │     ALTER TABLE transactions                                      │
@@ -160,17 +159,17 @@ This is a critical concept for the exam and for production use:
 ```
 
 ```sql
--- Minimal set to give analysts read access
-GRANT USE CATALOG ON CATALOG prod_catalog TO `analysts`;
-GRANT USE SCHEMA ON SCHEMA prod_catalog.hr_db TO `analysts`;
-GRANT SELECT ON TABLE prod_catalog.hr_db.employees TO `analysts`;
+-- Read access for division groups
+GRANT USE CATALOG ON CATALOG prod_catalog TO `mid_west`;
+GRANT USE SCHEMA ON SCHEMA prod_catalog.hr_db TO `mid_west`;
+GRANT SELECT ON TABLE prod_catalog.hr_db.employees TO `mid_west`;
 
--- Shortcut: grant on schema gives SELECT on all tables in that schema
-GRANT USE CATALOG ON CATALOG prod_catalog TO `analysts`;
-GRANT USE SCHEMA, SELECT ON SCHEMA prod_catalog.hr_db TO `analysts`;
+GRANT USE CATALOG ON CATALOG prod_catalog TO `west_division`;
+GRANT USE SCHEMA ON SCHEMA prod_catalog.hr_db TO `west_division`;
+GRANT SELECT ON TABLE prod_catalog.hr_db.employees TO `west_division`;
 
--- Grant on catalog propagates down
-GRANT USE CATALOG, USE SCHEMA, SELECT ON CATALOG prod_catalog TO `analysts`;
+-- Full access for admin1
+GRANT USE CATALOG, USE SCHEMA, SELECT ON CATALOG prod_catalog TO `admin1`;
 ```
 
 ---
@@ -185,23 +184,22 @@ Dynamic views were the standard approach before native Row Filters. Understandin
 ### Row-Level Security via Dynamic View
 
 ```sql
--- Only show employees from the user's own department
+-- Only show employees from the user's own division
 CREATE OR REPLACE VIEW prod_catalog.hr_db.secure_employees_vw AS
 SELECT *
 FROM prod_catalog.hr_db.employees
 WHERE
   CASE
-    WHEN is_account_group_member('admins') THEN true
-    WHEN is_account_group_member('engineering') AND department = 'Engineering' THEN true
-    WHEN is_account_group_member('marketing')   AND department = 'Marketing'   THEN true
-    WHEN is_account_group_member('finance')     AND department = 'Finance'     THEN true
-    WHEN is_account_group_member('hr')          AND department = 'HR'          THEN true
+    WHEN is_account_group_member('admin1')        THEN true
+    WHEN is_account_group_member('mid_west')      AND region = 'mid_west'      THEN true
+    WHEN is_account_group_member('west_division') AND region = 'west_division' THEN true
     ELSE false
   END;
 
 -- Grant on VIEW, not on TABLE
-GRANT SELECT ON VIEW prod_catalog.hr_db.secure_employees_vw TO `analysts`;
--- Do NOT grant SELECT on prod_catalog.hr_db.employees to analysts
+GRANT SELECT ON VIEW prod_catalog.hr_db.secure_employees_vw TO `mid_west`;
+GRANT SELECT ON VIEW prod_catalog.hr_db.secure_employees_vw TO `west_division`;
+-- Do NOT grant SELECT on prod_catalog.hr_db.employees to division groups
 ```
 
 ### Column Masking via Dynamic View
@@ -213,27 +211,25 @@ SELECT
   first_name,
   last_name,
 
-  -- Email: visible to HR and admins, masked for others
+  -- Email: visible to admin1 only, masked for division users
   CASE
-    WHEN is_account_group_member('hr') OR is_account_group_member('admins')
+    WHEN is_account_group_member('admin1')
       THEN email
     ELSE concat(left(email, 2), '***@***')
   END AS email,
 
-  -- SSN: last 4 digits only unless HR/admin
+  -- SSN: last 4 digits only unless admin1
   CASE
-    WHEN is_account_group_member('hr') OR is_account_group_member('admins')
+    WHEN is_account_group_member('admin1')
       THEN ssn
     ELSE concat('***-**-', right(ssn, 4))
   END AS ssn,
 
   department,
 
-  -- Salary: visible to finance, HR, and admins only
+  -- Salary: visible to admin1 only
   CASE
-    WHEN is_account_group_member('finance')
-      OR is_account_group_member('hr')
-      OR is_account_group_member('admins')
+    WHEN is_account_group_member('admin1')
       THEN salary
     ELSE NULL
   END AS salary
@@ -299,59 +295,63 @@ WHERE is_active = true;
 -- Step 1: Create a row filter function
 -- The function must return BOOLEAN
 -- Parameters map to columns in the filtered table
-CREATE OR REPLACE FUNCTION prod_catalog.hr_db.dept_row_filter(dept STRING)
+CREATE OR REPLACE FUNCTION prod_catalog.hr_db.division_row_filter(div STRING)
 RETURNS BOOLEAN
 RETURN
-  is_account_group_member('admins')          -- admins see all
-  OR is_account_group_member(lower(dept));   -- users see their dept rows
+  is_account_group_member('admin1')          -- admin1 sees all
+  OR is_account_group_member(lower(div));    -- users see their division rows
+  -- lower('mid_west') = 'mid_west' = group name
+  -- lower('west_division') = 'west_division' = group name
 
 -- Step 2: Attach the row filter to the table
--- ON (dept) maps the column `department` to the function parameter `dept`
+-- ON (region) maps the column `region` to the function parameter `div`
 ALTER TABLE prod_catalog.hr_db.employees
-  SET ROW FILTER prod_catalog.hr_db.dept_row_filter ON (department);
+  SET ROW FILTER prod_catalog.hr_db.division_row_filter ON (region);
 
 -- Step 3: Grant EXECUTE on the function to users who query the table
 -- (They need to execute the filter function as part of their query)
-GRANT EXECUTE ON FUNCTION prod_catalog.hr_db.dept_row_filter
-  TO `analysts`;
+GRANT EXECUTE ON FUNCTION prod_catalog.hr_db.division_row_filter
+  TO `mid_west`;
+GRANT EXECUTE ON FUNCTION prod_catalog.hr_db.division_row_filter
+  TO `west_division`;
 
 -- Now query the TABLE directly — filter is automatic
 SELECT * FROM prod_catalog.hr_db.employees;
--- Engineering user sees only Engineering rows
--- Finance user sees only Finance rows
--- Admin sees all rows
+-- mid_west user sees only region='mid_west' rows
+-- west_division user sees only region='west_division' rows
+-- admin1 sees all rows
 
 -- Step 4: Remove row filter when no longer needed
 ALTER TABLE prod_catalog.hr_db.employees DROP ROW FILTER;
 ```
 
-### Row Filter: Regional Data Pattern
+### Row Filter: Division Data Pattern
 
-This replaces the old "create a view per region" pattern:
+This replaces the old "create a view per division" pattern:
 
 ```sql
--- OLD WAY: 3 views (APAC, EMEA, AMER)
-CREATE VIEW apac_sales_vw AS SELECT * FROM sales WHERE region = 'APAC';
-CREATE VIEW emea_sales_vw AS SELECT * FROM sales WHERE region = 'EMEA';
-CREATE VIEW amer_sales_vw AS SELECT * FROM sales WHERE region = 'AMER';
--- Users query different views, maintenance burden grows with regions
+-- OLD WAY: 2 views (mid_west, west_division)
+CREATE VIEW mid_west_sales_vw     AS SELECT * FROM sales WHERE region = 'mid_west';
+CREATE VIEW west_division_sales_vw AS SELECT * FROM sales WHERE region = 'west_division';
+-- Users query different views, maintenance burden grows with divisions
 
 -- NEW WAY: 1 row filter function + 1 table
 CREATE OR REPLACE FUNCTION prod_catalog.sales_db.region_row_filter(region_col STRING)
 RETURNS BOOLEAN
 RETURN
-  is_account_group_member('global_data_team')  -- global team sees all
-  OR is_account_group_member(concat(lower(region_col), '_team'));
-  -- apac_team sees APAC, emea_team sees EMEA, etc.
+  is_account_group_member('admin1')              -- admin1 sees all
+  OR is_account_group_member(lower(region_col)); -- group name matches region value
+  -- lower('mid_west') = 'mid_west' group sees mid_west rows
+  -- lower('west_division') = 'west_division' group sees west_division rows
 
 ALTER TABLE prod_catalog.sales_db.transactions
   SET ROW FILTER prod_catalog.sales_db.region_row_filter ON (region);
 
 -- ALL users query the SAME table — filter is transparent
 SELECT * FROM prod_catalog.sales_db.transactions;
--- APAC team member sees only region='APAC' rows
--- EMEA team member sees only region='EMEA' rows
--- Global team sees all rows
+-- mid_west member sees only region='mid_west' rows
+-- west_division member sees only region='west_division' rows
+-- admin1 sees all rows
 ```
 
 ---
@@ -392,7 +392,7 @@ CREATE OR REPLACE FUNCTION prod_catalog.hr_db.mask_email(email_val STRING)
 RETURNS STRING
 RETURN
   CASE
-    WHEN is_account_group_member('hr') OR is_account_group_member('admins')
+    WHEN is_account_group_member('admin1')
       THEN email_val
     ELSE concat(left(email_val, 2), '***@***')
   END;
@@ -401,7 +401,7 @@ CREATE OR REPLACE FUNCTION prod_catalog.hr_db.mask_ssn(ssn_val STRING)
 RETURNS STRING
 RETURN
   CASE
-    WHEN is_account_group_member('hr') OR is_account_group_member('admins')
+    WHEN is_account_group_member('admin1')
       THEN ssn_val
     ELSE concat('***-**-', right(ssn_val, 4))
   END;
@@ -410,9 +410,7 @@ CREATE OR REPLACE FUNCTION prod_catalog.hr_db.mask_salary(salary_val DOUBLE)
 RETURNS DOUBLE
 RETURN
   CASE
-    WHEN is_account_group_member('finance')
-      OR is_account_group_member('hr')
-      OR is_account_group_member('admins')
+    WHEN is_account_group_member('admin1')
       THEN salary_val
     ELSE NULL
   END;
@@ -428,15 +426,17 @@ ALTER TABLE prod_catalog.hr_db.employees
   ALTER COLUMN salary  SET MASK prod_catalog.hr_db.mask_salary;
 
 -- Step 3: Grant EXECUTE on masking functions
-GRANT EXECUTE ON FUNCTION prod_catalog.hr_db.mask_email   TO `analysts`;
-GRANT EXECUTE ON FUNCTION prod_catalog.hr_db.mask_ssn     TO `analysts`;
-GRANT EXECUTE ON FUNCTION prod_catalog.hr_db.mask_salary  TO `analysts`;
+GRANT EXECUTE ON FUNCTION prod_catalog.hr_db.mask_email   TO `mid_west`;
+GRANT EXECUTE ON FUNCTION prod_catalog.hr_db.mask_email   TO `west_division`;
+GRANT EXECUTE ON FUNCTION prod_catalog.hr_db.mask_ssn     TO `mid_west`;
+GRANT EXECUTE ON FUNCTION prod_catalog.hr_db.mask_ssn     TO `west_division`;
+GRANT EXECUTE ON FUNCTION prod_catalog.hr_db.mask_salary  TO `mid_west`;
+GRANT EXECUTE ON FUNCTION prod_catalog.hr_db.mask_salary  TO `west_division`;
 
 -- Now all users query the TABLE directly — masking is automatic
 SELECT employee_id, email, ssn, salary FROM prod_catalog.hr_db.employees;
--- HR user:      alice@company.com | 123-45-6789 | 120000.0
--- Finance user: al***@***        | ***-**-6789 | 120000.0
--- Analyst:      al***@***        | ***-**-6789 | NULL
+-- admin1:        alice@company.com | 123-45-6789 | 120000.0  (unmasked)
+-- mid_west user: al***@***        | ***-**-6789 | NULL       (masked)
 
 -- Step 4: Remove a column mask
 ALTER TABLE prod_catalog.hr_db.employees ALTER COLUMN email DROP MASK;
@@ -465,8 +465,10 @@ For teams migrating from the old regional views pattern:
   │  -- For each WHERE clause pattern in old views, create a fn   │
   │  CREATE FUNCTION region_filter(r STRING)                       │
   │  RETURNS BOOLEAN                                               │
-  │  RETURN is_account_group_member('global') OR                   │
+  │  RETURN is_account_group_member('admin1') OR                   │
   │         is_account_group_member(lower(r));                    │
+  │  -- lower('mid_west') = 'mid_west', lower('west_division') =  │
+  │  -- 'west_division' — group names match column values exactly  │
   └────────────────────────────────────────────────────────────────┘
 
   Phase 3: Attach to tables
@@ -477,20 +479,19 @@ For teams migrating from the old regional views pattern:
   Phase 4: Update grants (grant on TABLE, revoke from views)
   ┌────────────────────────────────────────────────────────────────┐
   │  GRANT USE CATALOG, USE SCHEMA, SELECT ON TABLE transactions  │
-  │    TO `apac_team`, `emea_team`, `amer_team`;                  │
+  │    TO `mid_west`, `west_division`;                            │
   │  GRANT EXECUTE ON FUNCTION region_filter                       │
-  │    TO `apac_team`, `emea_team`, `amer_team`;                  │
+  │    TO `mid_west`, `west_division`;                            │
   └────────────────────────────────────────────────────────────────┘
 
   Phase 5: Deprecate views (keep temporarily, then drop)
   ┌────────────────────────────────────────────────────────────────┐
-  │  ALTER VIEW apac_sales_vw                                      │
+  │  ALTER VIEW mid_west_sales_vw                                  │
   │    SET TBLPROPERTIES ('deprecated' = 'true',                  │
   │    'migrate_to' = 'transactions');                             │
   │  -- After cutover:                                             │
-  │  DROP VIEW apac_sales_vw;                                      │
-  │  DROP VIEW emea_sales_vw;                                      │
-  │  DROP VIEW amer_sales_vw;                                      │
+  │  DROP VIEW mid_west_sales_vw;                                  │
+  │  DROP VIEW west_division_sales_vw;                             │
   └────────────────────────────────────────────────────────────────┘
 ```
 
@@ -592,23 +593,26 @@ A production security pattern for a multi-team lakehouse:
   │  Catalog Layer                                                       │
   │  ┌───────────────────────────────────────────────────────────────┐  │
   │  │  prod_catalog                                                  │  │
-  │  │  Owner: data_platform_team                                    │  │
-  │  │  USE CATALOG: all_employees                                   │  │
+  │  │  Owner: admin1                                                │  │
+  │  │  USE CATALOG: mid_west, west_division, admin1                │  │
   │  │                                                               │  │
-  │  │  ├── Schema: raw_db (data_engineers only)                     │  │
-  │  │  │   Owner: de_team                                           │  │
-  │  │  │   USE SCHEMA + SELECT: de_team                            │  │
+  │  │  ├── Schema: raw_db (admin1 only)                             │  │
+  │  │  │   Owner: admin1                                           │  │
+  │  │  │   USE SCHEMA + SELECT: admin1                             │  │
   │  │  │                                                            │  │
-  │  │  ├── Schema: curated_db (analysts read, DE write)             │  │
-  │  │  │   Owner: de_team                                           │  │
-  │  │  │   USE SCHEMA + SELECT: analysts, de_team                  │  │
-  │  │  │   MODIFY: de_team                                         │  │
+  │  │  ├── Schema: curated_db (divisions read, admin1 write)        │  │
+  │  │  │   Owner: admin1                                           │  │
+  │  │  │   USE SCHEMA + SELECT: mid_west, west_division, admin1   │  │
+  │  │  │   MODIFY: admin1                                          │  │
   │  │  │   Row Filter: region_filter ON region column              │  │
+  │  │  │     → mid_west sees mid_west rows only                    │  │
+  │  │  │     → west_division sees west_division rows only          │  │
   │  │  │   Column Mask: mask_ssn ON ssn, mask_salary ON salary     │  │
+  │  │  │     → admin1 sees full values, divisions see NULL/masked  │  │
   │  │  │                                                            │  │
-  │  │  └── Schema: reporting_db (BI reads only)                     │  │
-  │  │      Owner: de_team                                           │  │
-  │  │      USE SCHEMA + SELECT: analysts, bi_team, dashboard_sp    │  │
+  │  │  └── Schema: reporting_db (read by all groups)                │  │
+  │  │      Owner: admin1                                           │  │
+  │  │      USE SCHEMA + SELECT: mid_west, west_division, admin1   │  │
   │  └───────────────────────────────────────────────────────────────┘  │
   └─────────────────────────────────────────────────────────────────────┘
 ```

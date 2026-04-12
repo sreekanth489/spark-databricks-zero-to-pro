@@ -90,16 +90,16 @@
 
 # MAGIC %sql
 # MAGIC INSERT INTO employees VALUES
-# MAGIC   (1,  'Alice',  'Johnson',  'alice@company.com',  '123-45-6789', 'Engineering', 'AMER', 120000.0, '2020-03-15', NULL, true),
-# MAGIC   (2,  'Bob',    'Smith',    'bob@company.com',    '234-56-7890', 'Engineering', 'AMER', 135000.0, '2019-07-01', 1,    true),
-# MAGIC   (3,  'Carol',  'Williams', 'carol@company.com',  '345-67-8901', 'Marketing',   'AMER', 95000.0,  '2021-01-10', NULL, true),
-# MAGIC   (4,  'David',  'Brown',    'david@company.com',  '456-78-9012', 'Finance',     'EMEA', 110000.0, '2018-11-20', NULL, true),
-# MAGIC   (5,  'Eve',    'Davis',    'eve@company.com',    '567-89-0123', 'Engineering', 'EMEA', 115000.0, '2022-06-05', 1,    true),
-# MAGIC   (6,  'Frank',  'Miller',   'frank@company.com',  '678-90-1234', 'Marketing',   'EMEA', 98000.0,  '2020-09-12', 3,    false),
-# MAGIC   (7,  'Grace',  'Wilson',   'grace@company.com',  '789-01-2345', 'Finance',     'APAC', 105000.0, '2021-04-18', 4,    true),
-# MAGIC   (8,  'Hank',   'Moore',    'hank@company.com',   '890-12-3456', 'HR',          'APAC', 88000.0,  '2017-02-28', NULL, true),
-# MAGIC   (9,  'Ivy',    'Taylor',   'ivy@company.com',    '901-23-4567', 'HR',          'APAC', 82000.0,  '2023-01-15', 8,    true),
-# MAGIC   (10, 'Jack',   'Anderson', 'jack@company.com',   '012-34-5678', 'Engineering', 'AMER', 128000.0, '2021-08-22', 1,    true)
+# MAGIC   (1,  'Alice',  'Johnson',  'alice@company.com',  '123-45-6789', 'Engineering', 'mid_west',      120000.0, '2020-03-15', NULL, true),
+# MAGIC   (2,  'Bob',    'Smith',    'bob@company.com',    '234-56-7890', 'Engineering', 'mid_west',      135000.0, '2019-07-01', 1,    true),
+# MAGIC   (3,  'Carol',  'Williams', 'carol@company.com',  '345-67-8901', 'Marketing',   'mid_west',      95000.0,  '2021-01-10', NULL, true),
+# MAGIC   (4,  'David',  'Brown',    'david@company.com',  '456-78-9012', 'Finance',     'west_division', 110000.0, '2018-11-20', NULL, true),
+# MAGIC   (5,  'Eve',    'Davis',    'eve@company.com',    '567-89-0123', 'Engineering', 'west_division', 115000.0, '2022-06-05', 1,    true),
+# MAGIC   (6,  'Frank',  'Miller',   'frank@company.com',  '678-90-1234', 'Marketing',   'west_division', 98000.0,  '2020-09-12', 3,    false),
+# MAGIC   (7,  'Grace',  'Wilson',   'grace@company.com',  '789-01-2345', 'Finance',     'mid_west',      105000.0, '2021-04-18', 4,    true),
+# MAGIC   (8,  'Hank',   'Moore',    'hank@company.com',   '890-12-3456', 'HR',          'mid_west',      88000.0,  '2017-02-28', NULL, true),
+# MAGIC   (9,  'Ivy',    'Taylor',   'ivy@company.com',    '901-23-4567', 'HR',          'west_division', 82000.0,  '2023-01-15', 8,    true),
+# MAGIC   (10, 'Jack',   'Anderson', 'jack@company.com',   '012-34-5678', 'Engineering', 'west_division', 128000.0, '2021-08-22', 1,    true)
 
 # COMMAND ----------
 
@@ -170,33 +170,37 @@
 
 # MAGIC %md
 # MAGIC ```sql
-# MAGIC -- Minimal read access for analysts group:
-# MAGIC GRANT USE CATALOG ON CATALOG databricks_pro    TO `analysts`;
-# MAGIC GRANT USE SCHEMA  ON SCHEMA uc_security_lab    TO `analysts`;
-# MAGIC GRANT SELECT      ON TABLE employees            TO `analysts`;
+# MAGIC -- Read access for division groups:
+# MAGIC GRANT USE CATALOG ON CATALOG databricks_pro    TO `mid_west`;
+# MAGIC GRANT USE SCHEMA  ON SCHEMA uc_security_lab    TO `mid_west`;
+# MAGIC GRANT SELECT      ON TABLE employees            TO `mid_west`;
+# MAGIC GRANT USE CATALOG ON CATALOG databricks_pro    TO `west_division`;
+# MAGIC GRANT USE SCHEMA  ON SCHEMA uc_security_lab    TO `west_division`;
+# MAGIC GRANT SELECT      ON TABLE employees            TO `west_division`;
+# MAGIC
+# MAGIC -- Full access for admin1:
+# MAGIC GRANT ALL PRIVILEGES ON SCHEMA uc_security_lab TO `admin1`;
 # MAGIC
 # MAGIC -- Shortcut: GRANT on schema covers all tables in that schema
-# MAGIC GRANT USE SCHEMA, SELECT ON SCHEMA uc_security_lab TO `analysts`;
+# MAGIC GRANT USE SCHEMA, SELECT ON SCHEMA uc_security_lab TO `mid_west`;
 # MAGIC
-# MAGIC -- Write access
-# MAGIC GRANT MODIFY ON TABLE employees TO `data_engineers`;
+# MAGIC -- Write access (admin1 manages the data)
+# MAGIC GRANT MODIFY ON TABLE employees TO `admin1`;
 # MAGIC
 # MAGIC -- Create new tables in schema
-# MAGIC GRANT CREATE TABLE ON SCHEMA uc_security_lab TO `data_engineers`;
-# MAGIC
-# MAGIC -- Full schema access
-# MAGIC GRANT ALL PRIVILEGES ON SCHEMA uc_security_lab TO `schema_owner_group`;
+# MAGIC GRANT CREATE TABLE ON SCHEMA uc_security_lab TO `admin1`;
 # MAGIC
 # MAGIC -- Volume access
-# MAGIC GRANT READ VOLUME  ON VOLUME raw_files TO `analysts`;
-# MAGIC GRANT WRITE VOLUME ON VOLUME raw_files TO `data_engineers`;
+# MAGIC GRANT READ VOLUME  ON VOLUME raw_files TO `mid_west`;
+# MAGIC GRANT READ VOLUME  ON VOLUME raw_files TO `west_division`;
+# MAGIC GRANT WRITE VOLUME ON VOLUME raw_files TO `admin1`;
 # MAGIC
 # MAGIC -- Revoke
-# MAGIC REVOKE SELECT ON TABLE employees FROM `analysts`;
+# MAGIC REVOKE SELECT ON TABLE employees FROM `mid_west`;
 # MAGIC
 # MAGIC -- Transfer ownership (best practice: assign to group, not individual)
-# MAGIC ALTER TABLE employees SET OWNER TO `data_platform_team`;
-# MAGIC ALTER SCHEMA uc_security_lab SET OWNER TO `data_platform_team`;
+# MAGIC ALTER TABLE employees SET OWNER TO `admin1`;
+# MAGIC ALTER SCHEMA uc_security_lab SET OWNER TO `admin1`;
 # MAGIC ```
 
 # COMMAND ----------
@@ -209,9 +213,9 @@
 # MAGIC and for complex multi-condition logic.
 # MAGIC
 # MAGIC **Problem being solved**:
-# MAGIC - Engineering team should only see Engineering rows
-# MAGIC - Marketing team should only see Marketing rows
-# MAGIC - Admins see everything
+# MAGIC - `mid_west` group should only see mid_west division rows
+# MAGIC - `west_division` group should only see west_division rows
+# MAGIC - `admin1` sees everything
 # MAGIC
 # MAGIC ```
 # MAGIC  User query  ──▶  Dynamic View  ──▶  WHERE (is_account_group_member check)
@@ -224,38 +228,34 @@
 # MAGIC -- Check group membership for current user
 # MAGIC -- (This will return true only if you're in that group)
 # MAGIC SELECT
-# MAGIC   current_user()                           AS user,
-# MAGIC   is_account_group_member('admins')        AS is_admin,
-# MAGIC   is_account_group_member('engineering')   AS is_engineering,
-# MAGIC   is_account_group_member('marketing')     AS is_marketing,
-# MAGIC   is_account_group_member('finance')       AS is_finance,
-# MAGIC   is_account_group_member('hr')            AS is_hr
+# MAGIC   current_user()                              AS user,
+# MAGIC   is_account_group_member('admin1')           AS is_admin,
+# MAGIC   is_account_group_member('mid_west')         AS is_mid_west,
+# MAGIC   is_account_group_member('west_division')    AS is_west_division
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC -- Row-Level Security: Department-based access via dynamic view
-# MAGIC CREATE OR REPLACE VIEW dept_secure_employees_vw AS
+# MAGIC -- Row-Level Security: Division-based access via dynamic view
+# MAGIC CREATE OR REPLACE VIEW division_secure_employees_vw AS
 # MAGIC SELECT
 # MAGIC   employee_id, first_name, last_name, email,
 # MAGIC   department, region, salary, hire_date, is_active
 # MAGIC FROM employees
 # MAGIC WHERE
 # MAGIC   CASE
-# MAGIC     WHEN is_account_group_member('admins')      THEN true          -- see all
-# MAGIC     WHEN is_account_group_member('engineering') AND department = 'Engineering' THEN true
-# MAGIC     WHEN is_account_group_member('marketing')   AND department = 'Marketing'   THEN true
-# MAGIC     WHEN is_account_group_member('finance')     AND department = 'Finance'     THEN true
-# MAGIC     WHEN is_account_group_member('hr')          AND department = 'HR'          THEN true
-# MAGIC     ELSE false                                                     -- no access
+# MAGIC     WHEN is_account_group_member('admin1')        THEN true              -- see all
+# MAGIC     WHEN is_account_group_member('mid_west')      AND region = 'mid_west'      THEN true
+# MAGIC     WHEN is_account_group_member('west_division') AND region = 'west_division' THEN true
+# MAGIC     ELSE false                                                           -- no access
 # MAGIC   END
-# MAGIC COMMENT 'Row-level security: users see only their department rows'
+# MAGIC COMMENT 'Row-level security: users see only their division rows'
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC -- Query the secure view — as admin/owner you see all rows
-# MAGIC SELECT * FROM dept_secure_employees_vw ORDER BY department
+# MAGIC -- Query the secure view — as admin1/owner you see all rows
+# MAGIC SELECT * FROM division_secure_employees_vw ORDER BY region
 
 # COMMAND ----------
 
@@ -265,27 +265,24 @@
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC -- OLD PATTERN: One view per region (maintenance burden)
-# MAGIC CREATE OR REPLACE VIEW amer_employees_vw AS
-# MAGIC   SELECT * FROM employees WHERE region = 'AMER';
+# MAGIC -- OLD PATTERN: One view per division (maintenance burden)
+# MAGIC CREATE OR REPLACE VIEW mid_west_employees_vw AS
+# MAGIC   SELECT * FROM employees WHERE region = 'mid_west';
 # MAGIC
-# MAGIC CREATE OR REPLACE VIEW emea_employees_vw AS
-# MAGIC   SELECT * FROM employees WHERE region = 'EMEA';
-# MAGIC
-# MAGIC CREATE OR REPLACE VIEW apac_employees_vw AS
-# MAGIC   SELECT * FROM employees WHERE region = 'APAC';
+# MAGIC CREATE OR REPLACE VIEW west_division_employees_vw AS
+# MAGIC   SELECT * FROM employees WHERE region = 'west_division';
 
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC -- OLD PATTERN: User knows to query their region view
-# MAGIC SELECT * FROM amer_employees_vw
+# MAGIC -- OLD PATTERN: User knows to query their division view
+# MAGIC SELECT * FROM mid_west_employees_vw
 
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC **Problem**: If you add a new region (say LATAM), you must create another view.
-# MAGIC If a user changes from AMER to EMEA team, they need access to a different view.
+# MAGIC **Problem**: If you add a new division, you must create another view.
+# MAGIC If a user moves from mid_west to west_division, they need access to a different view.
 # MAGIC The NEW way (native Row Filters) is in the next notebook.
 
 # COMMAND ----------
@@ -297,8 +294,8 @@
 # MAGIC Protect sensitive columns (PII, salary, SSN) based on group membership.
 # MAGIC
 # MAGIC ```
-# MAGIC  Data in table              What HR user sees      What analyst sees
-# MAGIC  ─────────────────────      ─────────────────────  ─────────────────────
+# MAGIC  Data in table              What admin1 sees       What mid_west/west_division sees
+# MAGIC  ─────────────────────      ─────────────────────  ─────────────────────────────────
 # MAGIC  email: alice@co.com   →   alice@co.com (full)    al***@*** (masked)
 # MAGIC  ssn:   123-45-6789   →   123-45-6789 (full)     ***-**-6789 (partial)
 # MAGIC  salary: 120000       →   120000.0    (full)     NULL (hidden)
@@ -313,16 +310,16 @@
 # MAGIC   first_name,
 # MAGIC   last_name,
 # MAGIC
-# MAGIC   -- Email: visible to HR and admins, masked for others
+# MAGIC   -- Email: visible to admin1 only, masked for division users
 # MAGIC   CASE
-# MAGIC     WHEN is_account_group_member('hr') OR is_account_group_member('admins')
+# MAGIC     WHEN is_account_group_member('admin1')
 # MAGIC       THEN email
 # MAGIC     ELSE concat(left(email, 2), '***@***')
 # MAGIC   END AS email,
 # MAGIC
-# MAGIC   -- SSN: last 4 digits only unless HR/admin
+# MAGIC   -- SSN: last 4 digits only unless admin1
 # MAGIC   CASE
-# MAGIC     WHEN is_account_group_member('hr') OR is_account_group_member('admins')
+# MAGIC     WHEN is_account_group_member('admin1')
 # MAGIC       THEN ssn
 # MAGIC     ELSE concat('***-**-', right(ssn, 4))
 # MAGIC   END AS ssn,
@@ -330,11 +327,9 @@
 # MAGIC   department,
 # MAGIC   region,
 # MAGIC
-# MAGIC   -- Salary: only finance, HR, admins see actual value
+# MAGIC   -- Salary: only admin1 sees actual value
 # MAGIC   CASE
-# MAGIC     WHEN is_account_group_member('finance')
-# MAGIC       OR is_account_group_member('hr')
-# MAGIC       OR is_account_group_member('admins')
+# MAGIC     WHEN is_account_group_member('admin1')
 # MAGIC       THEN salary
 # MAGIC     ELSE NULL
 # MAGIC   END AS salary,
@@ -343,7 +338,7 @@
 # MAGIC   is_active
 # MAGIC FROM employees
 # MAGIC WHERE is_active = true
-# MAGIC COMMENT 'Column masking: PII hidden based on group membership'
+# MAGIC COMMENT 'Column masking: PII hidden for division users, visible to admin1'
 
 # COMMAND ----------
 
@@ -356,11 +351,11 @@
 # MAGIC %md
 # MAGIC Column masking summary:
 # MAGIC
-# MAGIC | Column | HR Group | Finance Group | Engineering/Marketing | Admin |
-# MAGIC |--------|----------|---------------|-----------------------|-------|
-# MAGIC | email  | Full     | Masked        | Masked                | Full  |
-# MAGIC | ssn    | Full     | Masked        | Masked                | Full  |
-# MAGIC | salary | Full     | Full          | NULL                  | Full  |
+# MAGIC | Column | admin1 Group | mid_west / west_division |
+# MAGIC |--------|-------------|--------------------------|
+# MAGIC | email  | Full        | Masked (al***@***)       |
+# MAGIC | ssn    | Full        | Masked (***-**-XXXX)     |
+# MAGIC | salary | Full        | NULL (hidden)            |
 
 # COMMAND ----------
 
@@ -371,28 +366,26 @@
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC -- Combined: department row filter + PII column masking in one view
+# MAGIC -- Combined: division row filter + PII column masking in one view
 # MAGIC CREATE OR REPLACE VIEW fully_secure_employees_vw AS
 # MAGIC SELECT
 # MAGIC   employee_id,
 # MAGIC   first_name,
 # MAGIC   last_name,
 # MAGIC   CASE
-# MAGIC     WHEN is_account_group_member('hr') OR is_account_group_member('admins')
+# MAGIC     WHEN is_account_group_member('admin1')
 # MAGIC       THEN email
 # MAGIC     ELSE concat(left(email, 2), '***@***')
 # MAGIC   END AS email,
 # MAGIC   CASE
-# MAGIC     WHEN is_account_group_member('hr') OR is_account_group_member('admins')
+# MAGIC     WHEN is_account_group_member('admin1')
 # MAGIC       THEN ssn
 # MAGIC     ELSE concat('***-**-', right(ssn, 4))
 # MAGIC   END AS ssn,
 # MAGIC   department,
 # MAGIC   region,
 # MAGIC   CASE
-# MAGIC     WHEN is_account_group_member('finance')
-# MAGIC       OR is_account_group_member('hr')
-# MAGIC       OR is_account_group_member('admins')
+# MAGIC     WHEN is_account_group_member('admin1')
 # MAGIC       THEN salary
 # MAGIC     ELSE NULL
 # MAGIC   END AS salary,
@@ -401,11 +394,9 @@
 # MAGIC FROM employees
 # MAGIC WHERE
 # MAGIC   CASE
-# MAGIC     WHEN is_account_group_member('admins')      THEN true
-# MAGIC     WHEN is_account_group_member('engineering') AND department = 'Engineering' THEN true
-# MAGIC     WHEN is_account_group_member('marketing')   AND department = 'Marketing'   THEN true
-# MAGIC     WHEN is_account_group_member('finance')     AND department = 'Finance'     THEN true
-# MAGIC     WHEN is_account_group_member('hr')          AND department = 'HR'          THEN true
+# MAGIC     WHEN is_account_group_member('admin1')        THEN true
+# MAGIC     WHEN is_account_group_member('mid_west')      AND region = 'mid_west'      THEN true
+# MAGIC     WHEN is_account_group_member('west_division') AND region = 'west_division' THEN true
 # MAGIC     ELSE false
 # MAGIC   END
 # MAGIC COMMENT 'Row + column security combined in one view'
@@ -421,12 +412,17 @@
 # MAGIC **Grant pattern for view-based security**:
 # MAGIC ```sql
 # MAGIC -- Grant on the VIEW, NOT on the base TABLE
-# MAGIC GRANT USE CATALOG ON CATALOG databricks_pro TO `analysts`;
-# MAGIC GRANT USE SCHEMA  ON SCHEMA uc_security_lab  TO `analysts`;
-# MAGIC GRANT SELECT      ON VIEW fully_secure_employees_vw TO `analysts`;
+# MAGIC GRANT USE CATALOG ON CATALOG databricks_pro TO `mid_west`;
+# MAGIC GRANT USE SCHEMA  ON SCHEMA uc_security_lab  TO `mid_west`;
+# MAGIC GRANT SELECT      ON VIEW fully_secure_employees_vw TO `mid_west`;
+# MAGIC
+# MAGIC -- Repeat for west_division:
+# MAGIC GRANT USE CATALOG ON CATALOG databricks_pro TO `west_division`;
+# MAGIC GRANT USE SCHEMA  ON SCHEMA uc_security_lab  TO `west_division`;
+# MAGIC GRANT SELECT      ON VIEW fully_secure_employees_vw TO `west_division`;
 # MAGIC
 # MAGIC -- Do NOT run this — it would bypass the view security:
-# MAGIC -- GRANT SELECT ON TABLE employees TO `analysts`;
+# MAGIC -- GRANT SELECT ON TABLE employees TO `mid_west`;
 # MAGIC ```
 
 # COMMAND ----------
@@ -445,7 +441,7 @@
 # MAGIC RETURNS STRING
 # MAGIC RETURN
 # MAGIC   CASE
-# MAGIC     WHEN is_account_group_member('hr') OR is_account_group_member('admins')
+# MAGIC     WHEN is_account_group_member('admin1')
 # MAGIC       THEN email_val
 # MAGIC     ELSE concat(left(email_val, 2), '***@', split(email_val, '@')[1])
 # MAGIC   END
@@ -458,7 +454,7 @@
 # MAGIC RETURNS STRING
 # MAGIC RETURN
 # MAGIC   CASE
-# MAGIC     WHEN is_account_group_member('hr') OR is_account_group_member('admins')
+# MAGIC     WHEN is_account_group_member('admin1')
 # MAGIC       THEN ssn_val
 # MAGIC     ELSE concat('***-**-', right(ssn_val, 4))
 # MAGIC   END
@@ -559,10 +555,9 @@
 # MAGIC %sql
 # MAGIC DROP FUNCTION IF EXISTS mask_email;
 # MAGIC DROP FUNCTION IF EXISTS mask_ssn;
-# MAGIC DROP VIEW IF EXISTS dept_secure_employees_vw;
-# MAGIC DROP VIEW IF EXISTS amer_employees_vw;
-# MAGIC DROP VIEW IF EXISTS emea_employees_vw;
-# MAGIC DROP VIEW IF EXISTS apac_employees_vw;
+# MAGIC DROP VIEW IF EXISTS division_secure_employees_vw;
+# MAGIC DROP VIEW IF EXISTS mid_west_employees_vw;
+# MAGIC DROP VIEW IF EXISTS west_division_employees_vw;
 # MAGIC DROP VIEW IF EXISTS masked_employees_vw;
 # MAGIC DROP VIEW IF EXISTS fully_secure_employees_vw;
 # MAGIC DROP VIEW IF EXISTS clean_masked_employees_vw;

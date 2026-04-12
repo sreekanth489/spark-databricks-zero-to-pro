@@ -25,14 +25,13 @@
 # MAGIC ```
 # MAGIC  OLD WAY (Dynamic Views)            NEW WAY (Native Policies)
 # MAGIC  ─────────────────────────          ────────────────────────────────
-# MAGIC  3 views for 3 regions:             1 Row Filter on the TABLE:
-# MAGIC  apac_sales_vw                      SELECT * FROM sales;
-# MAGIC  emea_sales_vw         ──────▶      (filtered automatically)
-# MAGIC  amer_sales_vw
+# MAGIC  2 views for 2 divisions:           1 Row Filter on the TABLE:
+# MAGIC  mid_west_sales_vw                  SELECT * FROM sales;
+# MAGIC  west_division_sales_vw ──────▶     (filtered automatically)
 # MAGIC
 # MAGIC  Users query different views        Users query ONE table
 # MAGIC  View can be bypassed               Cannot be bypassed
-# MAGIC  3 objects to maintain              1 function to maintain
+# MAGIC  2+ objects to maintain             1 function to maintain
 # MAGIC ```
 # MAGIC
 # MAGIC **Platform**: Databricks on AWS/Azure with Unity Catalog (DBR 12.2+)
@@ -79,7 +78,7 @@
 # MAGIC   email       STRING   COMMENT 'PII: Work email',
 # MAGIC   ssn         STRING   COMMENT 'PII: Social Security Number',
 # MAGIC   department  STRING,
-# MAGIC   region      STRING   COMMENT 'Geographic region: APAC, EMEA, AMER',
+# MAGIC   region      STRING   COMMENT 'Sales division: mid_west, west_division',
 # MAGIC   salary      DOUBLE   COMMENT 'PII: Annual salary',
 # MAGIC   hire_date   DATE,
 # MAGIC   is_active   BOOLEAN
@@ -90,16 +89,16 @@
 
 # MAGIC %sql
 # MAGIC INSERT INTO employees VALUES
-# MAGIC   (1,  'Alice',  'Johnson',  'alice@company.com',  '123-45-6789', 'Engineering', 'AMER', 120000.0, '2020-03-15', true),
-# MAGIC   (2,  'Bob',    'Smith',    'bob@company.com',    '234-56-7890', 'Engineering', 'AMER', 135000.0, '2019-07-01', true),
-# MAGIC   (3,  'Carol',  'Williams', 'carol@company.com',  '345-67-8901', 'Marketing',   'AMER', 95000.0,  '2021-01-10', true),
-# MAGIC   (4,  'David',  'Brown',    'david@company.com',  '456-78-9012', 'Finance',     'EMEA', 110000.0, '2018-11-20', true),
-# MAGIC   (5,  'Eve',    'Davis',    'eve@company.com',    '567-89-0123', 'Engineering', 'EMEA', 115000.0, '2022-06-05', true),
-# MAGIC   (6,  'Frank',  'Miller',   'frank@company.com',  '678-90-1234', 'Marketing',   'EMEA', 98000.0,  '2020-09-12', false),
-# MAGIC   (7,  'Grace',  'Wilson',   'grace@company.com',  '789-01-2345', 'Finance',     'APAC', 105000.0, '2021-04-18', true),
-# MAGIC   (8,  'Hank',   'Moore',    'hank@company.com',   '890-12-3456', 'HR',          'APAC', 88000.0,  '2017-02-28', true),
-# MAGIC   (9,  'Ivy',    'Taylor',   'ivy@company.com',    '901-23-4567', 'HR',          'APAC', 82000.0,  '2023-01-15', true),
-# MAGIC   (10, 'Jack',   'Anderson', 'jack@company.com',   '012-34-5678', 'Engineering', 'AMER', 128000.0, '2021-08-22', true)
+# MAGIC   (1,  'Alice',  'Johnson',  'alice@company.com',  '123-45-6789', 'Engineering', 'mid_west',      120000.0, '2020-03-15', true),
+# MAGIC   (2,  'Bob',    'Smith',    'bob@company.com',    '234-56-7890', 'Engineering', 'mid_west',      135000.0, '2019-07-01', true),
+# MAGIC   (3,  'Carol',  'Williams', 'carol@company.com',  '345-67-8901', 'Marketing',   'mid_west',      95000.0,  '2021-01-10', true),
+# MAGIC   (4,  'David',  'Brown',    'david@company.com',  '456-78-9012', 'Finance',     'west_division', 110000.0, '2018-11-20', true),
+# MAGIC   (5,  'Eve',    'Davis',    'eve@company.com',    '567-89-0123', 'Engineering', 'west_division', 115000.0, '2022-06-05', true),
+# MAGIC   (6,  'Frank',  'Miller',   'frank@company.com',  '678-90-1234', 'Marketing',   'west_division', 98000.0,  '2020-09-12', false),
+# MAGIC   (7,  'Grace',  'Wilson',   'grace@company.com',  '789-01-2345', 'Finance',     'mid_west',      105000.0, '2021-04-18', true),
+# MAGIC   (8,  'Hank',   'Moore',    'hank@company.com',   '890-12-3456', 'HR',          'mid_west',      88000.0,  '2017-02-28', true),
+# MAGIC   (9,  'Ivy',    'Taylor',   'ivy@company.com',    '901-23-4567', 'HR',          'west_division', 82000.0,  '2023-01-15', true),
+# MAGIC   (10, 'Jack',   'Anderson', 'jack@company.com',   '012-34-5678', 'Engineering', 'west_division', 128000.0, '2021-08-22', true)
 
 # COMMAND ----------
 
@@ -133,11 +132,11 @@
 # MAGIC %sql
 # MAGIC -- Row Filter: Department-based access
 # MAGIC -- Users see rows where department matches their group
-# MAGIC -- Admins see all rows
+# MAGIC -- admin1 sees all rows
 # MAGIC CREATE OR REPLACE FUNCTION dept_row_filter(dept STRING)
 # MAGIC RETURNS BOOLEAN
 # MAGIC RETURN
-# MAGIC   is_account_group_member('admins')
+# MAGIC   is_account_group_member('admin1')
 # MAGIC   OR is_account_group_member(lower(dept))
 # MAGIC   -- e.g., engineering group sees rows where dept = 'Engineering'
 # MAGIC   -- because lower('Engineering') = 'engineering' = group name
@@ -187,7 +186,7 @@
 # MAGIC ---
 # MAGIC ## Step 3: Regional Row Filter (Replaces Regional Views)
 # MAGIC
-# MAGIC This is the key pattern that replaces creating 3 separate views for APAC/EMEA/AMER.
+# MAGIC This is the key pattern that replaces creating separate views for each division (mid_west, west_division).
 
 # COMMAND ----------
 
@@ -198,29 +197,26 @@
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC -- Row Filter: Regional access
-# MAGIC -- Convention: group names match region names in lowercase
-# MAGIC --   APAC team is in 'apac_team' group
-# MAGIC --   EMEA team is in 'emea_team' group
-# MAGIC --   AMER team is in 'amer_team' group
-# MAGIC --   Global team ('global_data_team') sees all
+# MAGIC -- Row Filter: Division-based access
+# MAGIC -- Convention: region column values match group names exactly
+# MAGIC --   'mid_west' division → group 'mid_west'
+# MAGIC --   'west_division' division → group 'west_division'
+# MAGIC --   admin1 sees all rows
 # MAGIC CREATE OR REPLACE FUNCTION region_row_filter(region_col STRING)
 # MAGIC RETURNS BOOLEAN
 # MAGIC RETURN
-# MAGIC   is_account_group_member('admins')
-# MAGIC   OR is_account_group_member('global_data_team')
-# MAGIC   OR is_account_group_member(concat(lower(region_col), '_team'))
-# MAGIC   -- concat('apac', '_team') = 'apac_team'
-# MAGIC   -- User in apac_team sees APAC rows, emea_team sees EMEA rows, etc.
+# MAGIC   is_account_group_member('admin1')
+# MAGIC   OR is_account_group_member(lower(region_col))
+# MAGIC   -- lower('mid_west') = 'mid_west' = group name
+# MAGIC   -- lower('west_division') = 'west_division' = group name
 
 # COMMAND ----------
 
 # MAGIC %sql
 # MAGIC -- Test the function
 # MAGIC SELECT
-# MAGIC   region_row_filter('APAC') AS would_see_apac,
-# MAGIC   region_row_filter('EMEA') AS would_see_emea,
-# MAGIC   region_row_filter('AMER') AS would_see_amer
+# MAGIC   region_row_filter('mid_west')      AS would_see_mid_west,
+# MAGIC   region_row_filter('west_division') AS would_see_west_division
 
 # COMMAND ----------
 
@@ -232,7 +228,7 @@
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC -- All regions visible as admin; only your region if in apac/emea/amer group
+# MAGIC -- All rows visible as admin1; only your division rows if in mid_west or west_division
 # MAGIC SELECT employee_id, first_name, region, department
 # MAGIC FROM employees
 # MAGIC ORDER BY region
@@ -243,11 +239,10 @@
 # MAGIC **This replaces the old pattern**:
 # MAGIC
 # MAGIC ```sql
-# MAGIC -- OLD: 3 views to maintain
-# MAGIC CREATE VIEW apac_employees_vw AS SELECT * FROM employees WHERE region = 'APAC';
-# MAGIC CREATE VIEW emea_employees_vw AS SELECT * FROM employees WHERE region = 'EMEA';
-# MAGIC CREATE VIEW amer_employees_vw AS SELECT * FROM employees WHERE region = 'AMER';
-# MAGIC -- APAC users query apac_employees_vw, EMEA users query emea_employees_vw, etc.
+# MAGIC -- OLD: 2 views to maintain
+# MAGIC CREATE VIEW mid_west_employees_vw AS SELECT * FROM employees WHERE region = 'mid_west';
+# MAGIC CREATE VIEW west_division_employees_vw AS SELECT * FROM employees WHERE region = 'west_division';
+# MAGIC -- mid_west users query mid_west_employees_vw, west_division users query west_division_employees_vw
 # MAGIC
 # MAGIC -- NEW: 1 function + 1 ALTER TABLE. Everyone queries employees.
 # MAGIC ALTER TABLE employees SET ROW FILTER region_row_filter ON (region);
@@ -272,8 +267,7 @@
 # MAGIC RETURNS STRING
 # MAGIC RETURN
 # MAGIC   CASE
-# MAGIC     WHEN is_account_group_member('hr')
-# MAGIC       OR is_account_group_member('admins')
+# MAGIC     WHEN is_account_group_member('admin1')
 # MAGIC       THEN email_val                                          -- unmasked
 # MAGIC     ELSE concat(left(email_val, 2), '***@***')               -- masked
 # MAGIC   END
@@ -286,8 +280,7 @@
 # MAGIC RETURNS STRING
 # MAGIC RETURN
 # MAGIC   CASE
-# MAGIC     WHEN is_account_group_member('hr')
-# MAGIC       OR is_account_group_member('admins')
+# MAGIC     WHEN is_account_group_member('admin1')
 # MAGIC       THEN ssn_val                                            -- full SSN
 # MAGIC     ELSE concat('***-**-', right(ssn_val, 4))                -- last 4 only
 # MAGIC   END
@@ -296,14 +289,12 @@
 
 # MAGIC %sql
 # MAGIC -- Column mask for salary
-# MAGIC -- Return NULL if user is not in finance/hr/admins group
+# MAGIC -- Return NULL if user is not in admin1 group
 # MAGIC CREATE OR REPLACE FUNCTION mask_salary_col(salary_val DOUBLE)
 # MAGIC RETURNS DOUBLE
 # MAGIC RETURN
 # MAGIC   CASE
-# MAGIC     WHEN is_account_group_member('finance')
-# MAGIC       OR is_account_group_member('hr')
-# MAGIC       OR is_account_group_member('admins')
+# MAGIC     WHEN is_account_group_member('admin1')
 # MAGIC       THEN salary_val                                         -- full salary
 # MAGIC     ELSE NULL                                                 -- hidden
 # MAGIC   END
@@ -320,8 +311,8 @@
 
 # MAGIC %sql
 # MAGIC -- Query the table — column masks are applied automatically
-# MAGIC -- As admin: unmasked data
-# MAGIC -- As analyst: al***@***, ***-**-6789, NULL
+# MAGIC -- As admin1: unmasked data (full email, full SSN, full salary)
+# MAGIC -- As mid_west / west_division: al***@***, ***-**-6789, NULL
 # MAGIC SELECT employee_id, first_name, email, ssn, salary
 # MAGIC FROM employees
 # MAGIC ORDER BY employee_id
@@ -365,22 +356,29 @@
 # MAGIC ```sql
 # MAGIC -- Full permission grant pattern for native row filters + column masks:
 # MAGIC
-# MAGIC -- Navigation prerequisites
-# MAGIC GRANT USE CATALOG ON CATALOG databricks_pro   TO `analysts`;
-# MAGIC GRANT USE SCHEMA  ON SCHEMA uc_rowfilter_lab  TO `analysts`;
+# MAGIC -- Navigation prerequisites (repeat for each division group)
+# MAGIC GRANT USE CATALOG ON CATALOG databricks_pro   TO `mid_west`;
+# MAGIC GRANT USE SCHEMA  ON SCHEMA uc_rowfilter_lab  TO `mid_west`;
+# MAGIC GRANT USE CATALOG ON CATALOG databricks_pro   TO `west_division`;
+# MAGIC GRANT USE SCHEMA  ON SCHEMA uc_rowfilter_lab  TO `west_division`;
 # MAGIC
 # MAGIC -- Data access on the TABLE (not a view)
-# MAGIC GRANT SELECT      ON TABLE employees           TO `analysts`;
+# MAGIC GRANT SELECT      ON TABLE employees           TO `mid_west`;
+# MAGIC GRANT SELECT      ON TABLE employees           TO `west_division`;
 # MAGIC
-# MAGIC -- Execute permissions on filter/mask functions
-# MAGIC GRANT EXECUTE ON FUNCTION region_row_filter    TO `analysts`;
-# MAGIC GRANT EXECUTE ON FUNCTION mask_email_col       TO `analysts`;
-# MAGIC GRANT EXECUTE ON FUNCTION mask_ssn_col         TO `analysts`;
-# MAGIC GRANT EXECUTE ON FUNCTION mask_salary_col      TO `analysts`;
+# MAGIC -- Execute permissions on filter/mask functions (required for all users of the table)
+# MAGIC GRANT EXECUTE ON FUNCTION region_row_filter    TO `mid_west`;
+# MAGIC GRANT EXECUTE ON FUNCTION region_row_filter    TO `west_division`;
+# MAGIC GRANT EXECUTE ON FUNCTION mask_email_col       TO `mid_west`;
+# MAGIC GRANT EXECUTE ON FUNCTION mask_email_col       TO `west_division`;
+# MAGIC GRANT EXECUTE ON FUNCTION mask_ssn_col         TO `mid_west`;
+# MAGIC GRANT EXECUTE ON FUNCTION mask_ssn_col         TO `west_division`;
+# MAGIC GRANT EXECUTE ON FUNCTION mask_salary_col      TO `mid_west`;
+# MAGIC GRANT EXECUTE ON FUNCTION mask_salary_col      TO `west_division`;
 # MAGIC
-# MAGIC -- Now analysts can query employees directly:
-# MAGIC --   SELECT * FROM employees;
-# MAGIC -- They see only their region's rows, with PII masked.
+# MAGIC -- mid_west users query employees and see only mid_west rows, with PII masked.
+# MAGIC -- west_division users query employees and see only west_division rows, with PII masked.
+# MAGIC -- admin1 users see all rows with unmasked data.
 # MAGIC ```
 
 # COMMAND ----------
@@ -465,8 +463,8 @@
 # MAGIC        OR view_definition LIKE '%current_user()%';
 # MAGIC
 # MAGIC  2. Extract the WHERE clause logic into a Row Filter function
-# MAGIC     Old: WHERE region = 'APAC'  (hard-coded per view)
-# MAGIC     New: RETURN is_account_group_member(concat(lower(region_col), '_team'))
+# MAGIC     Old: WHERE region = 'mid_west'  (hard-coded per view)
+# MAGIC     New: RETURN is_account_group_member(lower(region_col))
 # MAGIC
 # MAGIC  3. Attach Row Filter to the BASE TABLE
 # MAGIC     ALTER TABLE sales SET ROW FILTER region_filter ON (region);
@@ -477,15 +475,18 @@
 # MAGIC          ALTER TABLE sales ALTER COLUMN ssn SET MASK mask_ssn;
 # MAGIC
 # MAGIC  5. Update grants — now grant SELECT on TABLE (not views)
-# MAGIC     GRANT SELECT ON TABLE sales TO `analysts`;
-# MAGIC     GRANT EXECUTE ON FUNCTION region_filter TO `analysts`;
+# MAGIC     GRANT SELECT ON TABLE employees TO `mid_west`;
+# MAGIC     GRANT SELECT ON TABLE employees TO `west_division`;
+# MAGIC     GRANT EXECUTE ON FUNCTION region_row_filter TO `mid_west`;
+# MAGIC     GRANT EXECUTE ON FUNCTION region_row_filter TO `west_division`;
 # MAGIC
-# MAGIC  6. Test: analysts query TABLE directly and see filtered+masked data
-# MAGIC     SELECT * FROM sales;  -- filter and masks apply automatically
+# MAGIC  6. Test: division users query TABLE directly and see filtered+masked data
+# MAGIC     SELECT * FROM employees;  -- filter and masks apply automatically
 # MAGIC
 # MAGIC  7. Deprecate old views with tags, then drop after cutover
-# MAGIC     ALTER VIEW apac_sales_vw SET TBLPROPERTIES ('status' = 'deprecated');
-# MAGIC     DROP VIEW apac_sales_vw;
+# MAGIC     ALTER VIEW mid_west_employees_vw SET TBLPROPERTIES ('status' = 'deprecated');
+# MAGIC     DROP VIEW mid_west_employees_vw;
+# MAGIC     DROP VIEW west_division_employees_vw;
 # MAGIC ```
 
 # COMMAND ----------
@@ -519,7 +520,7 @@
 # MAGIC   - When you want a named "secure view" as a product (e.g., published to consumers)
 # MAGIC
 # MAGIC When to use Native Row Filters:
-# MAGIC   - Replacing regional views (APAC/EMEA/AMER patterns)
+# MAGIC   - Replacing divisional views (mid_west/west_division patterns)
 # MAGIC   - Department-based access patterns
 # MAGIC   - Any row-level filter that maps group → column value
 # MAGIC   - New projects on UC (always prefer this over views)
