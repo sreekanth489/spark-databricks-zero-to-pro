@@ -302,9 +302,16 @@
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC -- Attach column masks to the table
-# MAGIC ALTER TABLE employees ALTER COLUMN email  SET MASK mask_email_col;
-# MAGIC ALTER TABLE employees ALTER COLUMN ssn    SET MASK mask_ssn_col;
+# MAGIC ALTER TABLE employees ALTER COLUMN email SET MASK mask_email_col
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC ALTER TABLE employees ALTER COLUMN ssn SET MASK mask_ssn_col
+
+# COMMAND ----------
+
+# MAGIC %sql
 # MAGIC ALTER TABLE employees ALTER COLUMN salary SET MASK mask_salary_col
 
 # COMMAND ----------
@@ -428,9 +435,16 @@
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC -- Remove column masks
-# MAGIC ALTER TABLE employees ALTER COLUMN email  DROP MASK;
-# MAGIC ALTER TABLE employees ALTER COLUMN ssn    DROP MASK;
+# MAGIC ALTER TABLE employees ALTER COLUMN email DROP MASK
+
+# COMMAND ----------
+
+# MAGIC %sql
+# MAGIC ALTER TABLE employees ALTER COLUMN ssn DROP MASK
+
+# COMMAND ----------
+
+# MAGIC %sql
 # MAGIC ALTER TABLE employees ALTER COLUMN salary DROP MASK
 
 # COMMAND ----------
@@ -541,14 +555,15 @@
 # COMMAND ----------
 
 # MAGIC %sql
-# MAGIC -- Drop functions first (must drop masks before dropping table)
+# MAGIC -- Drop table FIRST so mask/filter references are removed before dropping functions
+# MAGIC DROP TABLE IF EXISTS employees;
+# MAGIC
 # MAGIC DROP FUNCTION IF EXISTS region_row_filter;
 # MAGIC DROP FUNCTION IF EXISTS dept_row_filter;
 # MAGIC DROP FUNCTION IF EXISTS mask_email_col;
 # MAGIC DROP FUNCTION IF EXISTS mask_ssn_col;
 # MAGIC DROP FUNCTION IF EXISTS mask_salary_col;
 # MAGIC
-# MAGIC DROP TABLE  IF EXISTS employees;
 # MAGIC DROP SCHEMA IF EXISTS uc_rowfilter_lab CASCADE;
 
 # COMMAND ----------
