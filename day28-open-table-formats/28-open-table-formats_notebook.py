@@ -54,10 +54,13 @@ from pyspark.sql.types import (
 CATALOG = spark.sql("SELECT current_catalog()").collect()[0][0]
 SCHEMA  = "day28_open_table_formats"
 
+BASE_PATH = "s3://databricks-zero-to-pro/open-table-formats"
+
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.{SCHEMA}")
 spark.sql(f"USE {CATALOG}.{SCHEMA}")
 
 print(f"Working in: {CATALOG}.{SCHEMA}")
+print(f"Storage base path: {BASE_PATH}")
 
 # COMMAND ----------
 
@@ -127,9 +130,9 @@ trips_df.show(5, truncate=False)
 trips_df.write \
     .mode("overwrite") \
     .partitionBy("city") \
-    .parquet(f"/tmp/day28_raw_parquet/trips/")
+    .parquet(f"{BASE_PATH}/raw_parquet/trips/")
 
-print("Raw Parquet written to /tmp/day28_raw_parquet/trips/")
+print(f"Raw Parquet written to {BASE_PATH}/raw_parquet/trips/")
 
 # COMMAND ----------
 
@@ -167,7 +170,7 @@ new_batch = generate_trips(5000, seed=99)
 new_batch.write \
     .mode("overwrite") \
     .partitionBy("city") \
-    .parquet(f"/tmp/day28_raw_parquet/trips/")
+    .parquet(f"{BASE_PATH}/raw_parquet/trips/")
 
 print("Overwrote Parquet data.")
 print("The original 50,000 rows are GONE.")
@@ -638,16 +641,16 @@ trips_df.write \
     .format("hudi") \
     .options(**hudi_options_cow) \
     .mode("overwrite") \
-    .save(f"/tmp/day28_hudi/trips_cow/")
+    .save(f"{BASE_PATH}/hudi/trips_cow/")
 
-print("Hudi CoW table written to /tmp/day28_hudi/trips_cow/")
+print(f"Hudi CoW table written to {BASE_PATH}/hudi/trips_cow/")
 
 # COMMAND ----------
 
 # Read back the Hudi CoW table
 hudi_cow_df = spark.read \
     .format("hudi") \
-    .load("/tmp/day28_hudi/trips_cow/")
+    .load(f"{BASE_PATH}/hudi/trips_cow/")
 
 print(f"Rows in Hudi CoW table: {hudi_cow_df.count():,}")
 # Notice Hudi adds metadata columns: _hoodie_commit_time, _hoodie_record_key, etc.
@@ -684,10 +687,10 @@ cdc_batch.write \
     .format("hudi") \
     .options(**hudi_options_cow) \
     .mode("append") \
-    .save("/tmp/day28_hudi/trips_cow/")
+    .save(f"{BASE_PATH}/hudi/trips_cow/")
 
 print("Upsert complete.")
-print(f"Total rows after upsert: {spark.read.format('hudi').load('/tmp/day28_hudi/trips_cow/').count():,}")
+print(f"Total rows after upsert: {spark.read.format('hudi').load(f'{BASE_PATH}/hudi/trips_cow/').count():,}")
 
 # COMMAND ----------
 
@@ -717,9 +720,9 @@ trips_df.write \
     .format("hudi") \
     .options(**hudi_options_mor) \
     .mode("overwrite") \
-    .save("/tmp/day28_hudi/trips_mor/")
+    .save(f"{BASE_PATH}/hudi/trips_mor/")
 
-print("Hudi MoR table written to /tmp/day28_hudi/trips_mor/")
+print(f"Hudi MoR table written to {BASE_PATH}/hudi/trips_mor/")
 
 # COMMAND ----------
 
@@ -731,7 +734,7 @@ for batch_num in range(3):
         .format("hudi") \
         .options(**hudi_options_mor) \
         .mode("append") \
-        .save("/tmp/day28_hudi/trips_mor/")
+        .save(f"{BASE_PATH}/hudi/trips_mor/")
     print(f"Upsert batch {batch_num + 1} written (MoR: only log files updated, base files untouched)")
 
 # COMMAND ----------
@@ -745,13 +748,13 @@ for batch_num in range(3):
 snapshot_df = spark.read \
     .format("hudi") \
     .option("hoodie.datasource.query.type", "snapshot") \
-    .load("/tmp/day28_hudi/trips_mor/")
+    .load(f"{BASE_PATH}/hudi/trips_mor/")
 
 # Read-optimized query: reads only base Parquet files — fast but slightly stale
 read_opt_df = spark.read \
     .format("hudi") \
     .option("hoodie.datasource.query.type", "read_optimized") \
-    .load("/tmp/day28_hudi/trips_mor/")
+    .load(f"{BASE_PATH}/hudi/trips_mor/")
 
 print(f"Snapshot read (fully current):    {snapshot_df.count():,} rows")
 print(f"Read-optimized (base files only): {read_opt_df.count():,} rows")
@@ -773,7 +776,7 @@ print("After compaction, both counts will be equal")
 # Find the first and last commit times on the MoR table
 commits = spark.read \
     .format("hudi") \
-    .load("/tmp/day28_hudi/trips_mor/") \
+    .load(f"{BASE_PATH}/hudi/trips_mor/") \
     .select("_hoodie_commit_time") \
     .distinct() \
     .orderBy("_hoodie_commit_time")
@@ -789,7 +792,7 @@ if len(commit_times) >= 2:
         .option("hoodie.datasource.query.type",           "incremental") \
         .option("hoodie.datasource.read.begin.instanttime", begin_time) \
         .option("hoodie.datasource.read.end.instanttime",   end_time) \
-        .load("/tmp/day28_hudi/trips_mor/")
+        .load(f"{BASE_PATH}/hudi/trips_mor/")
 
     print(f"Rows that changed in this range: {incremental_df.count():,}")
     incremental_df.select(
@@ -881,7 +884,7 @@ updates_only.write \
     .format("hudi") \
     .options(**hudi_options_cow) \
     .mode("append") \
-    .save("/tmp/day28_hudi/trips_cow/")
+    .save(f"{BASE_PATH}/hudi/trips_cow/")
 hudi_cow_ms = int((time.time() - t0) * 1000)
 
 # --- Hudi MoR ---
@@ -890,7 +893,7 @@ updates_only.write \
     .format("hudi") \
     .options(**hudi_options_mor) \
     .mode("append") \
-    .save("/tmp/day28_hudi/trips_mor/")
+    .save(f"{BASE_PATH}/hudi/trips_mor/")
 hudi_mor_ms = int((time.time() - t0) * 1000)
 
 print("Write time for 500-record update batch:")
@@ -1107,17 +1110,12 @@ recommend_format(
 
 # COMMAND ----------
 
-import shutil
-for path in ["/tmp/day28_raw_parquet", "/tmp/day28_hudi"]:
+for path in [f"{BASE_PATH}/raw_parquet", f"{BASE_PATH}/hudi"]:
     try:
         dbutils.fs.rm(path, recurse=True)
         print(f"Removed {path}")
-    except Exception:
-        try:
-            shutil.rmtree(path)
-            print(f"Removed {path} (local)")
-        except Exception as e:
-            print(f"Could not remove {path}: {e}")
+    except Exception as e:
+        print(f"Could not remove {path}: {e}")
 
 print("Cleanup complete.")
 
