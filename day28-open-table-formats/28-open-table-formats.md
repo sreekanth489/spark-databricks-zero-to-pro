@@ -17,6 +17,22 @@ After completing this session, you will be able to:
 
 To understand why open table formats exist, you need to feel the pain they replaced.
 
+### The Architecture Evolution: Warehouse → Lake → Lakehouse
+
+*(Source: Databricks)*
+
+![Data Warehouse → Data Lake → Data Lakehouse](../resources/images/databricks-warehouse-lake-lakehouse.png)
+
+The diagram above tells the story in three panels:
+
+| Era | What you got | What was missing |
+|-----|-------------|-----------------|
+| **Data Warehouse** | ACID, SQL, BI/Reports | Only structured data; expensive; no ML/DS |
+| **Data Lake** | All data types (structured, semi-structured, unstructured); cheap object storage; ML/DS workloads | No ACID → dirty reads; no governance; "data swamp" |
+| **Data Lakehouse** | All data types + ACID + Metadata & Governance Layer + BI/Reports/DS/ML from one store | Needed a new layer between raw files and query engines — this is exactly what open table formats provide |
+
+The **Data Lake era** (roughly 2010–2019) unlocked cheap, scalable storage for all data types. But it introduced a governance vacuum: raw Parquet files on S3/ADLS/GCS had no concept of transactions, history, or row-level deletes. The Metadata and Governance Layer you see in the Lakehouse panel is not a single product — it is the combination of an open table format (Delta Lake, Iceberg, or Hudi) sitting on top of object storage.
+
 ### The Parquet + Hive Metastore Era
 
 Before 2019, most data lakes were built on **raw Parquet files** managed by the **Hive Metastore**. This approach had a fundamental problem: Parquet is just a file format, not a table format. It describes how bytes are laid out on disk — it knows nothing about transactions, history, or schema evolution.
