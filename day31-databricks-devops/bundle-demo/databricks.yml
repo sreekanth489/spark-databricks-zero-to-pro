@@ -1,60 +1,58 @@
 # =============================================================================
 # Databricks Asset Bundle — Day 31: E-Commerce Medallion Pipeline
 #
-# SETUP:
-#   1. Install the Databricks CLI:  pip install databricks-cli
-#                              or:  brew install databricks
-#   2. Configure auth:              databricks configure
-#   3. Set workspace URLs below in each target (replace the placeholder URLs)
+# WORKSPACE: Single workspace used for all three environments.
+# Environments are isolated by SCHEMA NAME within the same catalog.
+#
+#   dev     → schema: ecommerce_dev     (personal prefix via mode: development)
+#   staging → schema: ecommerce_staging
+#   prod    → schema: ecommerce_prod
+#
+# COMPUTE: Serverless (no cluster config needed — workspace enforces serverless)
+#
+# QUICK START:
+#   1. Install Databricks CLI:  pip install databricks-cli
+#   2. Authenticate:            databricks configure
+#      (enter host: https://dbc-88198f4a-22a1.cloud.databricks.com + your token)
+#   3. Set your catalog name in the 'catalog' variable default below
 #   4. Validate:   databricks bundle validate
 #   5. Deploy dev: databricks bundle deploy
-#   6. Deploy prod: databricks bundle deploy --target prod
+#   6. Run:        databricks bundle run ecommerce_medallion_pipeline
 # =============================================================================
 
 bundle:
   name: day31-ecommerce-pipeline
 
-# Pull resource definitions from separate files for readability
+# Pull resource definitions from separate files
 include:
   - resources/jobs.yml
   - resources/pipelines.yml
 
 # ---------------------------------------------------------------------------
 # Variables
-# Each variable has a default (used if no target override is set).
-# Override per target in the 'targets:' section below.
-# Reference in any resource YAML with: ${var.variable_name}
+# Declare once here; override per target below.
+# Reference anywhere in resource YAML with ${var.variable_name}.
 # ---------------------------------------------------------------------------
 variables:
 
   catalog:
-    description: "Unity Catalog catalog name"
-    default: dev_catalog
+    description: "Unity Catalog catalog name. Replace 'main' with your actual catalog."
+    default: main   # ← replace with your catalog name (run: SELECT current_catalog())
 
   schema:
-    description: "Schema (database) for all tables in this pipeline"
-    default: ecommerce
-
-  job_node_type:
-    description: "Worker node instance type for job clusters"
-    default: "i3.xlarge"
-
-  job_num_workers:
-    description: "Number of cluster workers"
-    default: "2"
+    description: "Schema for this environment's tables. Overridden per target."
+    default: ecommerce_dev
 
   schedule_cron:
     description: >
-      Quartz CRON schedule for the medallion pipeline job.
+      Quartz CRON for the daily pipeline run.
       Format: seconds minutes hours day month weekday
-      Examples:
-        '0 0 1 * * ?'     → every day at 1am
-        '0 0 */6 * * ?'   → every 6 hours
-        '0 30 8 ? * MON-FRI' → weekdays at 8:30am
+      '0 0 1 * * ?'    → every day at 1am
+      '0 0 */6 * * ?'  → every 6 hours
     default: "0 0 */6 * * ?"
 
   schedule_pause_status:
-    description: "PAUSED or UNPAUSED. Dev keeps schedules paused to avoid noise."
+    description: "PAUSED or UNPAUSED. Dev defaults to PAUSED (manual runs only)."
     default: PAUSED
 
   dlt_channel:
@@ -62,47 +60,47 @@ variables:
     default: CURRENT
 
 # ---------------------------------------------------------------------------
-# Targets — one per environment
+# Targets — all three point to the SAME workspace.
+# Environment isolation is achieved through different schema names.
 #
-# dev     → development mode: adds [dev <username>] prefix to all resource
-#           names so every developer gets their own isolated deployment.
+# dev     → mode: development adds "[dev <your-username>]" prefix to all
+#           resource names so your deployment never collides with colleagues.
+#           Data lands in: <catalog>.ecommerce_dev
 #
-# staging → matches prod cluster size; used for integration testing and
-#           sign-off before production deployment.
+# staging → no prefix, but uses a separate schema.
+#           Mirrors prod config to catch issues before they reach prod.
+#           Data lands in: <catalog>.ecommerce_staging
 #
-# prod    → separate workspace (production isolation); jobs run as a
-#           service principal via run_as; schedule is active.
+# prod    → live schedule enabled. In a real org this would point to a
+#           separate workspace and use a service principal (run_as).
+#           Data lands in: <catalog>.ecommerce_prod
 # ---------------------------------------------------------------------------
 targets:
 
-  # ── DEV ──────────────────────────────────────────────────────────────────
+  # ── DEV ────────────────────────────────────────────────────────────────────
   dev:
-    mode: development    # prefixes names: "[dev alice] ecommerce-medallion-dev"
-    default: true        # used when no --target flag is passed
+    mode: development   # resource names become: "[dev <username>] ecommerce-medallion-dev"
+    default: true       # used when --target flag is omitted
     workspace:
-      host: https://adb-XXXXXXXXXXXXXXXXXX.XX.azuredatabricks.net  # ← replace
+      host: https://dbc-88198f4a-22a1.cloud.databricks.com
     variables:
-      catalog:              dev_catalog
-      schema:               ecommerce
-      job_node_type:        "i3.xlarge"
-      job_num_workers:      "2"
-      schedule_cron:        "0 0 */6 * * ?"
-      schedule_pause_status: PAUSED    # dev: manual triggers only
-      dlt_channel:          CURRENT
+      catalog:               main              # ← same catalog as staging/prod
+      schema:                ecommerce_dev     # isolated schema for dev
+      schedule_cron:         "0 0 */6 * * ?"
+      schedule_pause_status: PAUSED            # manual runs only in dev
+      dlt_channel:           CURRENT
 
-  # ── STAGING ──────────────────────────────────────────────────────────────
+  # ── STAGING ────────────────────────────────────────────────────────────────
   staging:
     workspace:
-      host: https://adb-XXXXXXXXXXXXXXXXXX.XX.azuredatabricks.net  # ← replace (can share with dev)
+      host: https://dbc-88198f4a-22a1.cloud.databricks.com
     variables:
-      catalog:              staging_catalog
-      schema:               ecommerce
-      job_node_type:        "i3.2xlarge"
-      job_num_workers:      "4"
-      schedule_cron:        "0 0 3 * * ?"    # nightly at 3am
+      catalog:               main
+      schema:                ecommerce_staging  # isolated schema for staging
+      schedule_cron:         "0 0 3 * * ?"      # nightly at 3am
       schedule_pause_status: UNPAUSED
-      dlt_channel:          CURRENT
-    # Override: staging sends failure alerts to a dedicated channel
+      dlt_channel:           CURRENT
+    # Target-level override: staging gets its own failure notification
     resources:
       jobs:
         ecommerce_medallion_pipeline:
@@ -110,24 +108,20 @@ targets:
             on_failure:
               - staging-alerts@company.com
 
-  # ── PROD ─────────────────────────────────────────────────────────────────
+  # ── PROD ───────────────────────────────────────────────────────────────────
   prod:
     workspace:
-      host: https://adb-YYYYYYYYYYYYYYYYYY.YY.azuredatabricks.net  # ← replace (prod workspace)
-    # Jobs run as a service principal, not the deploying user.
-    # This separates the deployment identity from the execution identity —
-    # critical for audit trails and least-privilege access.
-    run_as:
-      service_principal_name: "prod-etl-service-principal"    # ← replace with your SP name
+      host: https://dbc-88198f4a-22a1.cloud.databricks.com
+    # Uncomment run_as once you have a service principal configured:
+    # run_as:
+    #   service_principal_name: "prod-etl-service-principal"
     variables:
-      catalog:              prod_catalog
-      schema:               ecommerce
-      job_node_type:        "i3.4xlarge"
-      job_num_workers:      "8"
-      schedule_cron:        "0 0 1 * * ?"    # nightly at 1am
+      catalog:               main
+      schema:                ecommerce_prod    # isolated schema for prod
+      schedule_cron:         "0 0 1 * * ?"    # nightly at 1am
       schedule_pause_status: UNPAUSED
-      dlt_channel:          CURRENT
-    # Override: prod adds health check rules and extra failure contacts
+      dlt_channel:           CURRENT
+    # Target-level overrides: prod adds a health check and extra contacts
     resources:
       jobs:
         ecommerce_medallion_pipeline:
@@ -135,8 +129,7 @@ targets:
             rules:
               - metric: RUN_DURATION_SECONDS
                 op: GREATER_THAN
-                value: 3600    # alert if run takes longer than 1 hour
+                value: 3600    # alert if pipeline takes > 1 hour
           email_notifications:
             on_failure:
               - data-oncall@company.com
-              - data-platform-lead@company.com

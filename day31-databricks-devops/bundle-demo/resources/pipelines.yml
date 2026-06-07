@@ -1,16 +1,13 @@
 # =============================================================================
 # DLT / Lakeflow Pipeline Definitions
 #
-# This is the DLT (Delta Live Tables / Lakeflow Declarative Pipelines) version
-# of the silver transformation layer.
+# COMPUTE: Serverless — no clusters section required.
+#   Databricks DLT automatically uses serverless when no cluster is specified
+#   and the workspace enforces serverless compute.
 #
-# Relationship to jobs.yml:
-#   - jobs.yml defines the notebook-based batch job (Bronze → Silver → Gold)
-#   - pipelines.yml defines the DLT pipeline (continuous / triggered streaming)
-#
-# These are two separate architectures for the same use case.
-# Typically you would use ONE or the other, not both.
-# Both are included here for teaching purposes.
+# This DLT pipeline is the streaming alternative to the notebook-based
+# silver transformation in jobs.yml. In a real project you would use one or
+# the other, not both. Both are included here for teaching purposes.
 #
 # Deploy:  databricks bundle deploy --target dev
 # Run:     databricks bundle run orders_dlt_pipeline --target dev
@@ -22,61 +19,51 @@ resources:
     # -------------------------------------------------------------------------
     # DLT Pipeline: Orders Silver Layer
     #
-    # Reads from the bronze Delta table written by ingest_bronze task,
-    # applies streaming transformations, and materialises the silver layer
-    # as DLT-managed tables with data quality expectations.
+    # Reads from the bronze Delta table (written by the ingest_bronze job task),
+    # applies data quality expectations, and materialises two silver tables:
+    #   - silver_orders_validated  (all valid orders)
+    #   - silver_orders_delivered  (revenue-generating orders only)
     # -------------------------------------------------------------------------
     orders_dlt_pipeline:
 
       name: "orders-dlt-silver-${bundle.target}"
       description: >
-        DLT pipeline that continuously processes the bronze orders table
-        into a validated, enriched silver layer with data quality checks.
+        DLT pipeline that processes bronze orders into a validated silver layer
+        with data quality checks. Runs on serverless compute.
 
-      # Source notebook containing @dlt.table and @dlt.expect decorators
+      # Source notebook containing the @dlt.table decorator definitions
       libraries:
         - notebook:
             path: ../src/dlt_silver_pipeline.py
 
-      # Pipeline configuration — passed to the DLT runtime and accessible
-      # inside the notebook via spark.conf.get("pipelines.<key>")
+      # Configuration key-value pairs passed to the DLT runtime.
+      # Access inside the notebook with: spark.conf.get("pipelines.<key>")
       configuration:
-        catalog:     ${var.catalog}
-        schema:      ${var.schema}
-        environment: ${bundle.target}
+        catalog:                      ${var.catalog}
+        schema:                       ${var.schema}
+        environment:                  ${bundle.target}
         pipelines.enableTrackHistory: "true"
 
-      # DLT catalog and target schema (where DLT publishes the live tables)
+      # DLT publishes live tables to this catalog and schema
       catalog: ${var.catalog}
       target:  ${var.schema}
 
-      clusters:
-        - label: default
-          node_type_id: ${var.job_node_type}
-          num_workers:  ${var.job_num_workers}
-          custom_tags:
-            bundle:      "day31-ecommerce-pipeline"
-            environment: ${bundle.target}
-            managed_by:  "databricks-asset-bundles"
-
-      # triggered: runs on-demand (or scheduled)
-      # continuous: pipeline runs continuously like a streaming job
+      # triggered: runs on-demand or on a schedule
+      # continuous: always-on streaming
       continuous: false
 
-      # development: true  → DLT development mode (no data quality quarantine,
-      #                       cheaper — use in dev/staging for fast iteration)
-      # development: false → production mode (full expectations enforcement)
-      development: ${bundle.is_development}    # true when mode: development is set on target
+      # development: true  → DLT dev mode (no quarantine, faster iteration)
+      # development: false → production mode (full expectation enforcement)
+      # ${bundle.is_development} is automatically true when mode: development
+      # is set on the target (i.e., the dev target), false for staging/prod.
+      development: ${bundle.is_development}
 
-      # Photon acceleration (available on supported runtimes)
-      photon: false
-
-      # DLT channel: CURRENT (stable) or PREVIEW (latest features)
+      # DLT release channel
       channel: ${var.dlt_channel}
 
-      # Permissions for the pipeline
-      permissions:
-        - level: CAN_RUN
-          group_name: data-engineers
-        - level: CAN_VIEW
-          group_name: data-analysts
+      # Uncomment and update group names once your workspace groups are set up.
+      # permissions:
+      #   - level: CAN_RUN
+      #     group_name: data-engineers
+      #   - level: CAN_VIEW
+      #     group_name: data-analysts
