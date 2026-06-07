@@ -55,6 +55,10 @@ variables:
     description: "PAUSED or UNPAUSED. Dev defaults to PAUSED (manual runs only)."
     default: PAUSED
 
+  dlt_development_mode:
+    description: "Enable DLT development mode (true in dev for faster iteration, false in staging/prod)"
+    default: "false"
+
   dlt_channel:
     description: "DLT release channel: CURRENT or PREVIEW"
     default: CURRENT
@@ -88,6 +92,7 @@ targets:
       schema:                ecommerce_dev     # isolated schema for dev
       schedule_cron:         "0 0 */6 * * ?"
       schedule_pause_status: PAUSED            # manual runs only in dev
+      dlt_development_mode:  "true"           # DLT dev mode: no quarantine, faster iteration
       dlt_channel:           CURRENT
 
   # ── STAGING ────────────────────────────────────────────────────────────────
@@ -99,6 +104,7 @@ targets:
       schema:                ecommerce_staging  # isolated schema for staging
       schedule_cron:         "0 0 3 * * ?"      # nightly at 3am
       schedule_pause_status: UNPAUSED
+      dlt_development_mode:  "false"
       dlt_channel:           CURRENT
     # Target-level override: staging gets its own failure notification
     resources:
@@ -120,6 +126,7 @@ targets:
       schema:                ecommerce_prod    # isolated schema for prod
       schedule_cron:         "0 0 1 * * ?"    # nightly at 1am
       schedule_pause_status: UNPAUSED
+      dlt_development_mode:  "false"
       dlt_channel:           CURRENT
     # Target-level overrides: prod adds a health check and extra contacts
     resources:

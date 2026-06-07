@@ -51,9 +51,9 @@ resources:
 
       # development: true  → DLT dev mode (no quarantine, faster iteration)
       # development: false → production mode (full expectation enforcement)
-      # ${bundle.is_development} is automatically true when mode: development
-      # is set on the target (i.e., the dev target), false for staging/prod.
-      development: ${bundle.is_development}
+      # Controlled by the dlt_development_mode variable in databricks.yml:
+      #   dev target sets it to "true", staging/prod set it to "false"
+      development: ${var.dlt_development_mode}
 
       # DLT release channel
       channel: ${var.dlt_channel}
