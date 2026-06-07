@@ -27,9 +27,6 @@ resources:
     orders_dlt_pipeline:
 
       name: "orders-dlt-silver-${bundle.target}"
-      description: >
-        DLT pipeline that processes bronze orders into a validated silver layer
-        with data quality checks. Runs on serverless compute.
 
       # Source notebook containing the @dlt.table decorator definitions
       libraries:

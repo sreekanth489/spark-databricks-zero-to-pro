@@ -37,7 +37,7 @@ variables:
 
   catalog:
     description: "Unity Catalog catalog name. Replace 'main' with your actual catalog."
-    default: main   # ← replace with your catalog name (run: SELECT current_catalog())
+    default: databricks_pro
 
   schema:
     description: "Schema for this environment's tables. Overridden per target."
@@ -84,7 +84,7 @@ targets:
     workspace:
       host: https://dbc-88198f4a-22a1.cloud.databricks.com
     variables:
-      catalog:               main              # ← same catalog as staging/prod
+      catalog:               databricks_pro    # ← same catalog as staging/prod
       schema:                ecommerce_dev     # isolated schema for dev
       schedule_cron:         "0 0 */6 * * ?"
       schedule_pause_status: PAUSED            # manual runs only in dev
@@ -95,7 +95,7 @@ targets:
     workspace:
       host: https://dbc-88198f4a-22a1.cloud.databricks.com
     variables:
-      catalog:               main
+      catalog:               databricks_pro
       schema:                ecommerce_staging  # isolated schema for staging
       schedule_cron:         "0 0 3 * * ?"      # nightly at 3am
       schedule_pause_status: UNPAUSED
@@ -116,7 +116,7 @@ targets:
     # run_as:
     #   service_principal_name: "prod-etl-service-principal"
     variables:
-      catalog:               main
+      catalog:               databricks_pro
       schema:                ecommerce_prod    # isolated schema for prod
       schedule_cron:         "0 0 1 * * ?"    # nightly at 1am
       schedule_pause_status: UNPAUSED
