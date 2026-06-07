@@ -36,7 +36,7 @@ resources:
       # Source notebook containing @dlt.table and @dlt.expect decorators
       libraries:
         - notebook:
-            path: ./src/dlt_silver_pipeline.py
+            path: ../src/dlt_silver_pipeline.py
 
       # Pipeline configuration — passed to the DLT runtime and accessible
       # inside the notebook via spark.conf.get("pipelines.<key>")

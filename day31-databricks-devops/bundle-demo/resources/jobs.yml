@@ -37,7 +37,7 @@ resources:
         - task_key: ingest_bronze
           description: "Generate synthetic orders and write to bronze Delta table"
           notebook_task:
-            notebook_path: ./src/bronze_ingestion.py
+            notebook_path: ../src/bronze_ingestion.py
             base_parameters:
               catalog:     ${var.catalog}
               schema:      ${var.schema}
@@ -54,7 +54,7 @@ resources:
           depends_on:
             - task_key: ingest_bronze    # only runs after bronze succeeds
           notebook_task:
-            notebook_path: ./src/silver_transform.py
+            notebook_path: ../src/silver_transform.py
             base_parameters:
               catalog:     ${var.catalog}
               schema:      ${var.schema}
@@ -68,7 +68,7 @@ resources:
           depends_on:
             - task_key: transform_silver
           notebook_task:
-            notebook_path: ./src/gold_aggregates.py
+            notebook_path: ../src/gold_aggregates.py
             base_parameters:
               catalog:     ${var.catalog}
               schema:      ${var.schema}
