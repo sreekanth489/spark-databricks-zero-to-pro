@@ -1,0 +1,135 @@
+# =============================================================================
+# Deployment Workflow
+#
+# Triggered on merge to main.
+# Promotes the bundle through: dev → staging → prod
+# Prod deployment requires manual approval via a GitHub Environment gate.
+#
+# Required GitHub secrets:
+#   DEV_DATABRICKS_HOST      — dev workspace URL
+#   DEV_DATABRICKS_TOKEN     — service principal token (dev)
+#   STAGING_DATABRICKS_HOST  — staging workspace URL
+#   STAGING_DATABRICKS_TOKEN — service principal token (staging)
+#   PROD_DATABRICKS_HOST     — prod workspace URL
+#   PROD_DATABRICKS_TOKEN    — service principal token (prod)
+#
+# Required GitHub Environments (Settings → Environments):
+#   staging    — configure with required reviewers if desired
+#   production — configure with required reviewers (mandatory for prod deploy)
+# =============================================================================
+
+name: "Deploy Bundle"
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "day31-databricks-devops/bundle-demo/**"
+
+defaults:
+  run:
+    working-directory: day31-databricks-devops/bundle-demo
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # Stage 1: Deploy to dev
+  # Always runs on merge to main. Dev uses 'mode: development' so names are
+  # prefixed with [dev <username>] — safe to redeploy at any time.
+  # ---------------------------------------------------------------------------
+  deploy-dev:
+    name: "Deploy → dev"
+    runs-on: ubuntu-latest
+    environment: dev
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: databricks/setup-cli@v0.230.0
+
+      - name: Deploy to dev
+        run: databricks bundle deploy --target dev
+        env:
+          DATABRICKS_HOST:  ${{ secrets.DEV_DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DEV_DATABRICKS_TOKEN }}
+
+      - name: Smoke test — run one pipeline task (bronze only)
+        run: |
+          databricks bundle run ecommerce_medallion_pipeline \
+            --target dev \
+            --task ingest_bronze
+        env:
+          DATABRICKS_HOST:  ${{ secrets.DEV_DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DEV_DATABRICKS_TOKEN }}
+
+  # ---------------------------------------------------------------------------
+  # Stage 2: Deploy to staging
+  # Runs after dev smoke test passes.
+  # Full pipeline run validates end-to-end correctness.
+  # ---------------------------------------------------------------------------
+  deploy-staging:
+    name: "Deploy → staging"
+    runs-on: ubuntu-latest
+    needs: deploy-dev
+    environment: staging
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: databricks/setup-cli@v0.230.0
+
+      - name: Deploy to staging
+        run: databricks bundle deploy --target staging
+        env:
+          DATABRICKS_HOST:  ${{ secrets.STAGING_DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.STAGING_DATABRICKS_TOKEN }}
+
+      - name: Smoke test — run full pipeline in staging
+        # Runs all three tasks: ingest_bronze → transform_silver → compute_gold
+        run: |
+          databricks bundle run ecommerce_medallion_pipeline --target staging
+        env:
+          DATABRICKS_HOST:  ${{ secrets.STAGING_DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.STAGING_DATABRICKS_TOKEN }}
+
+      - name: Show staging bundle summary
+        run: databricks bundle summary --target staging
+        env:
+          DATABRICKS_HOST:  ${{ secrets.STAGING_DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.STAGING_DATABRICKS_TOKEN }}
+
+  # ---------------------------------------------------------------------------
+  # Stage 3: Deploy to production
+  # Requires manual approval via the 'production' GitHub Environment.
+  # Runs as the prod service principal (configured via run_as in databricks.yml).
+  # ---------------------------------------------------------------------------
+  deploy-prod:
+    name: "Deploy → prod"
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    environment: production    # ← this gate requires reviewer approval in GitHub
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: databricks/setup-cli@v0.230.0
+
+      - name: Deploy to prod
+        run: databricks bundle deploy --target prod
+        env:
+          DATABRICKS_HOST:  ${{ secrets.PROD_DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.PROD_DATABRICKS_TOKEN }}
+
+      - name: Show prod bundle summary
+        run: databricks bundle summary --target prod
+        env:
+          DATABRICKS_HOST:  ${{ secrets.PROD_DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.PROD_DATABRICKS_TOKEN }}
+
+      # Post-deploy smoke test: run a single task to verify the deployed job is live
+      - name: Post-deploy smoke test (bronze task only)
+        run: |
+          databricks bundle run ecommerce_medallion_pipeline \
+            --target prod \
+            --task ingest_bronze
+        env:
+          DATABRICKS_HOST:  ${{ secrets.PROD_DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.PROD_DATABRICKS_TOKEN }}

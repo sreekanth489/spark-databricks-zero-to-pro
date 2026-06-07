@@ -1,0 +1,74 @@
+# =============================================================================
+# PR Validation Workflow
+#
+# Runs on every pull request targeting main.
+# Validates the bundle against all targets WITHOUT making any API calls
+# (bundle validate is a pure local YAML check).
+#
+# Required GitHub secrets:
+#   DEV_DATABRICKS_HOST   — dev/staging workspace URL
+#   DEV_DATABRICKS_TOKEN  — service principal token for dev workspace
+#   PROD_DATABRICKS_HOST  — production workspace URL
+#   PROD_DATABRICKS_TOKEN — service principal token for prod workspace
+# =============================================================================
+
+name: "PR — Validate Bundle"
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      # Only run this workflow when bundle files change
+      - "day31-databricks-devops/bundle-demo/**"
+
+defaults:
+  run:
+    working-directory: day31-databricks-devops/bundle-demo
+
+jobs:
+
+  # ---------------------------------------------------------------------------
+  # Validate all targets
+  # 'bundle validate' makes ZERO API calls — it resolves YAML locally.
+  # Fast (< 10 seconds), free, and catches 90% of configuration mistakes
+  # before any deployment happens.
+  # ---------------------------------------------------------------------------
+  validate:
+    name: "Validate bundle targets"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Databricks CLI
+        uses: databricks/setup-cli@v0.230.0    # pin version to avoid surprise breaks
+
+      # Validate dev target
+      - name: Validate — dev
+        run: databricks bundle validate --target dev
+        env:
+          DATABRICKS_HOST:  ${{ secrets.DEV_DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DEV_DATABRICKS_TOKEN }}
+
+      # Validate staging target
+      - name: Validate — staging
+        run: databricks bundle validate --target staging
+        env:
+          DATABRICKS_HOST:  ${{ secrets.DEV_DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DEV_DATABRICKS_TOKEN }}
+
+      # Validate prod target (uses separate prod workspace credentials)
+      - name: Validate — prod
+        run: databricks bundle validate --target prod
+        env:
+          DATABRICKS_HOST:  ${{ secrets.PROD_DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.PROD_DATABRICKS_TOKEN }}
+
+      # Output the fully-resolved bundle JSON for the PR review
+      - name: Show resolved bundle (dev)
+        run: databricks bundle validate --target dev --output json | python3 -m json.tool
+        env:
+          DATABRICKS_HOST:  ${{ secrets.DEV_DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DEV_DATABRICKS_TOKEN }}

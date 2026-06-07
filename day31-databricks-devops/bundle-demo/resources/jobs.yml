@@ -1,0 +1,132 @@
+# =============================================================================
+# Job Definitions
+#
+# References ${var.*} variables declared in databricks.yml.
+# Each variable is resolved at deploy time based on the --target flag.
+#
+# Deploy:  databricks bundle deploy --target dev
+# Run:     databricks bundle run ecommerce_medallion_pipeline --target dev
+# =============================================================================
+
+resources:
+  jobs:
+
+    # -------------------------------------------------------------------------
+    # Medallion Pipeline Job
+    #
+    # Three-task DAG:   ingest_bronze  →  transform_silver  →  compute_gold
+    #
+    # bronze: generates synthetic e-commerce orders and writes raw Delta table
+    # silver: cleans and enriches the bronze data
+    # gold:   aggregates to daily revenue metrics for BI consumption
+    # -------------------------------------------------------------------------
+    ecommerce_medallion_pipeline:
+
+      name: "ecommerce-medallion-${bundle.target}"
+      description: >
+        End-to-end medallion pipeline for the e-commerce domain.
+        Bronze → Silver → Gold via parameterized notebooks.
+        Environment-specific cluster sizes and schedules are injected
+        via bundle variables at deploy time.
+
+      # ── Tasks ──────────────────────────────────────────────────────────────
+
+      tasks:
+
+        # Task 1: Bronze — raw ingestion
+        - task_key: ingest_bronze
+          description: "Generate synthetic orders and write to bronze Delta table"
+          notebook_task:
+            notebook_path: ./src/bronze_ingestion.py
+            base_parameters:
+              catalog:     ${var.catalog}
+              schema:      ${var.schema}
+              environment: ${bundle.target}
+          # Each task can use a named job cluster (defined in job_clusters below)
+          # or spin up its own new_cluster. Bronze uses the shared cluster.
+          job_cluster_key: pipeline_cluster
+          timeout_seconds: 1800    # fail if task runs > 30 minutes
+          retry_on_timeout: false
+
+        # Task 2: Silver — clean and transform
+        - task_key: transform_silver
+          description: "Read bronze table, apply cleaning/enrichment, write silver"
+          depends_on:
+            - task_key: ingest_bronze    # only runs after bronze succeeds
+          notebook_task:
+            notebook_path: ./src/silver_transform.py
+            base_parameters:
+              catalog:     ${var.catalog}
+              schema:      ${var.schema}
+              environment: ${bundle.target}
+          job_cluster_key: pipeline_cluster
+          timeout_seconds: 1800
+
+        # Task 3: Gold — aggregate for BI
+        - task_key: compute_gold
+          description: "Aggregate silver to daily revenue metrics table"
+          depends_on:
+            - task_key: transform_silver
+          notebook_task:
+            notebook_path: ./src/gold_aggregates.py
+            base_parameters:
+              catalog:     ${var.catalog}
+              schema:      ${var.schema}
+              environment: ${bundle.target}
+          job_cluster_key: pipeline_cluster
+          timeout_seconds: 900
+
+      # ── Job Clusters ────────────────────────────────────────────────────────
+      # Defined once and referenced by task_key above.
+      # Cluster size comes from variables — same YAML works for dev (small)
+      # and prod (large) by injecting different variable values per target.
+
+      job_clusters:
+        - job_cluster_key: pipeline_cluster
+          new_cluster:
+            spark_version: "15.4.x-scala2.12"
+            node_type_id:  ${var.job_node_type}     # i3.xlarge in dev, i3.4xlarge in prod
+            num_workers:   ${var.job_num_workers}   # 2 in dev, 8 in prod
+            spark_conf:
+              "spark.databricks.delta.optimizeWrite.enabled": "true"
+              "spark.databricks.delta.autoCompact.enabled":   "true"
+            custom_tags:
+              bundle:      "day31-ecommerce-pipeline"
+              environment: ${bundle.target}
+              managed_by:  "databricks-asset-bundles"
+
+      # ── Schedule ────────────────────────────────────────────────────────────
+      # cron expression and pause_status both come from variables:
+      #   dev:     PAUSED  (manual runs only — avoids accidental charges)
+      #   staging: UNPAUSED, nightly at 3am
+      #   prod:    UNPAUSED, nightly at 1am
+
+      schedule:
+        quartz_cron_expression: ${var.schedule_cron}
+        timezone_id: America/Los_Angeles
+        pause_status: ${var.schedule_pause_status}
+
+      # ── Notifications ───────────────────────────────────────────────────────
+      # Base notifications shared across all targets.
+      # Individual targets can OVERRIDE this in databricks.yml under
+      #   targets.<name>.resources.jobs.ecommerce_medallion_pipeline.email_notifications
+
+      email_notifications:
+        on_failure:
+          - data-team@company.com
+
+      # ── Permissions ────────────────────────────────────────────────────────
+      # Access control for the job itself (who can view/run/edit in the UI).
+      # Apply to all targets.
+
+      permissions:
+        - level: CAN_MANAGE_RUN
+          group_name: data-engineers
+        - level: CAN_VIEW
+          group_name: data-analysts
+
+      # ── Queue ──────────────────────────────────────────────────────────────
+      queue:
+        enabled: true              # queues runs instead of skipping concurrent triggers
+
+      max_concurrent_runs: 1       # prevent overlapping pipeline runs

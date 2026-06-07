@@ -1,0 +1,142 @@
+# =============================================================================
+# Databricks Asset Bundle — Day 31: E-Commerce Medallion Pipeline
+#
+# SETUP:
+#   1. Install the Databricks CLI:  pip install databricks-cli
+#                              or:  brew install databricks
+#   2. Configure auth:              databricks configure
+#   3. Set workspace URLs below in each target (replace the placeholder URLs)
+#   4. Validate:   databricks bundle validate
+#   5. Deploy dev: databricks bundle deploy
+#   6. Deploy prod: databricks bundle deploy --target prod
+# =============================================================================
+
+bundle:
+  name: day31-ecommerce-pipeline
+
+# Pull resource definitions from separate files for readability
+include:
+  - resources/jobs.yml
+  - resources/pipelines.yml
+
+# ---------------------------------------------------------------------------
+# Variables
+# Each variable has a default (used if no target override is set).
+# Override per target in the 'targets:' section below.
+# Reference in any resource YAML with: ${var.variable_name}
+# ---------------------------------------------------------------------------
+variables:
+
+  catalog:
+    description: "Unity Catalog catalog name"
+    default: dev_catalog
+
+  schema:
+    description: "Schema (database) for all tables in this pipeline"
+    default: ecommerce
+
+  job_node_type:
+    description: "Worker node instance type for job clusters"
+    default: "i3.xlarge"
+
+  job_num_workers:
+    description: "Number of cluster workers"
+    default: "2"
+
+  schedule_cron:
+    description: >
+      Quartz CRON schedule for the medallion pipeline job.
+      Format: seconds minutes hours day month weekday
+      Examples:
+        '0 0 1 * * ?'     → every day at 1am
+        '0 0 */6 * * ?'   → every 6 hours
+        '0 30 8 ? * MON-FRI' → weekdays at 8:30am
+    default: "0 0 */6 * * ?"
+
+  schedule_pause_status:
+    description: "PAUSED or UNPAUSED. Dev keeps schedules paused to avoid noise."
+    default: PAUSED
+
+  dlt_channel:
+    description: "DLT release channel: CURRENT or PREVIEW"
+    default: CURRENT
+
+# ---------------------------------------------------------------------------
+# Targets — one per environment
+#
+# dev     → development mode: adds [dev <username>] prefix to all resource
+#           names so every developer gets their own isolated deployment.
+#
+# staging → matches prod cluster size; used for integration testing and
+#           sign-off before production deployment.
+#
+# prod    → separate workspace (production isolation); jobs run as a
+#           service principal via run_as; schedule is active.
+# ---------------------------------------------------------------------------
+targets:
+
+  # ── DEV ──────────────────────────────────────────────────────────────────
+  dev:
+    mode: development    # prefixes names: "[dev alice] ecommerce-medallion-dev"
+    default: true        # used when no --target flag is passed
+    workspace:
+      host: https://adb-XXXXXXXXXXXXXXXXXX.XX.azuredatabricks.net  # ← replace
+    variables:
+      catalog:              dev_catalog
+      schema:               ecommerce
+      job_node_type:        "i3.xlarge"
+      job_num_workers:      "2"
+      schedule_cron:        "0 0 */6 * * ?"
+      schedule_pause_status: PAUSED    # dev: manual triggers only
+      dlt_channel:          CURRENT
+
+  # ── STAGING ──────────────────────────────────────────────────────────────
+  staging:
+    workspace:
+      host: https://adb-XXXXXXXXXXXXXXXXXX.XX.azuredatabricks.net  # ← replace (can share with dev)
+    variables:
+      catalog:              staging_catalog
+      schema:               ecommerce
+      job_node_type:        "i3.2xlarge"
+      job_num_workers:      "4"
+      schedule_cron:        "0 0 3 * * ?"    # nightly at 3am
+      schedule_pause_status: UNPAUSED
+      dlt_channel:          CURRENT
+    # Override: staging sends failure alerts to a dedicated channel
+    resources:
+      jobs:
+        ecommerce_medallion_pipeline:
+          email_notifications:
+            on_failure:
+              - staging-alerts@company.com
+
+  # ── PROD ─────────────────────────────────────────────────────────────────
+  prod:
+    workspace:
+      host: https://adb-YYYYYYYYYYYYYYYYYY.YY.azuredatabricks.net  # ← replace (prod workspace)
+    # Jobs run as a service principal, not the deploying user.
+    # This separates the deployment identity from the execution identity —
+    # critical for audit trails and least-privilege access.
+    run_as:
+      service_principal_name: "prod-etl-service-principal"    # ← replace with your SP name
+    variables:
+      catalog:              prod_catalog
+      schema:               ecommerce
+      job_node_type:        "i3.4xlarge"
+      job_num_workers:      "8"
+      schedule_cron:        "0 0 1 * * ?"    # nightly at 1am
+      schedule_pause_status: UNPAUSED
+      dlt_channel:          CURRENT
+    # Override: prod adds health check rules and extra failure contacts
+    resources:
+      jobs:
+        ecommerce_medallion_pipeline:
+          health:
+            rules:
+              - metric: RUN_DURATION_SECONDS
+                op: GREATER_THAN
+                value: 3600    # alert if run takes longer than 1 hour
+          email_notifications:
+            on_failure:
+              - data-oncall@company.com
+              - data-platform-lead@company.com
