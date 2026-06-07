@@ -28,6 +28,9 @@ resources:
 
       name: "orders-dlt-silver-${bundle.target}"
 
+      # Required for workspaces that enforce serverless compute
+      serverless: true
+
       # Source notebook containing the @dlt.table decorator definitions
       libraries:
         - notebook:
