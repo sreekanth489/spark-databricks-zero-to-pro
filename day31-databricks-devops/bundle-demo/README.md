@@ -59,15 +59,17 @@ databricks bundle summary
 
 ## Environment Comparison
 
+All three targets deploy to the **same workspace** and **same catalog** (`databricks_pro`).
+Isolation is achieved through separate schema names — no separate workspaces required.
+
 | Config | dev | staging | prod |
 |--------|-----|---------|------|
 | Resource name prefix | `[dev <username>]` | none | none |
-| Catalog | `dev_catalog` | `staging_catalog` | `prod_catalog` |
-| Node type | `i3.xlarge` | `i3.2xlarge` | `i3.4xlarge` |
-| Workers | 2 | 4 | 8 |
-| Schedule | every 6h (PAUSED) | nightly 3am | nightly 1am |
-| Job runs as | deploying user | deploying user | service principal |
+| Schema | `ecommerce_dev` | `ecommerce_staging` | `ecommerce_prod` |
+| Compute | serverless | serverless | serverless |
+| Schedule | every 6h (PAUSED) | nightly 3am (active) | nightly 1am (active) |
 | DLT dev mode | `true` | `false` | `false` |
+| Job runs as | deploying user | deploying user | service principal (when configured) |
 
 ## Deploying to a Specific Target
 
